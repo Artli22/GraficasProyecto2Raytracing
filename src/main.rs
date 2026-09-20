@@ -3,17 +3,20 @@ mod rayIntersect;
 mod sphere;
 mod cubo;
 mod textura;
+mod billar;
 
 use framebuffer::Framebuffer;
 use rayIntersect::{Objeto, Ray, cross, escala, normalize, suma};
 use sphere::Sphere;
-use cubo::Cubo;
-use textura::{Canica, sombrear};
+use billar::crear_bolas;
+use textura::sombrear_puntual;
 use raylib::prelude::*;
 
 const WIDTH: i32 = 800;
 const HEIGHT: i32 = 600;
 const PITCH_MAX: f64 = 1.5;
+const LUZ_TECHO: [f64; 3] = [0.0, 4.5, -4.5];
+const COLOR_LUZ: [f64; 3] = [1.0, 0.72, 0.30];
 
 /// Direccion hacia la que mira la camara segun su yaw (giro en su eje Y) y pitch (arriba/abajo).
 fn direccion_camara(yaw: f64, pitch: f64) -> [f64; 3] {
@@ -27,20 +30,10 @@ fn direccion_camara(yaw: f64, pitch: f64) -> [f64; 3] {
 fn main() {
     let (mut rl, thread) = raylib::init()
         .size(WIDTH, HEIGHT)
-        .title("Ray Tracing - Sphere")
+        .title("Ray Tracing - Bolas de billar")
         .build();
 
-    let esfera = Sphere::new(
-        [0.0, 0.0, -3.0],
-        1.0,
-        Box::new(Canica::new([1.0, 0.5, 0.0], 50.0)),
-    );
-    let cubo = Cubo::new(
-        [0.5, 0.3, -1.5],
-        0.4,
-        Box::new(Canica::new([1.0, 0.0, 0.0], 80.0)),
-    );
-    let objetos: Vec<&dyn Objeto> = vec![&cubo];
+    let bolas = crear_bolas();
 
     // Una sola textura de GPU reutilizada cada frame: subir 480,000 pixeles
     // de una vez es mucho mas rapido que llamar draw_pixel por cada uno.
@@ -51,13 +44,12 @@ fn main() {
 
     // Camara libre: se mueve en sus propios ejes (adelante/atras, strafe, arriba/abajo)
     // y gira con yaw (su propio eje Y) y pitch (arriba/abajo).
-    let mut camera_pos = [0.2, 0.1, 0.5];
+    let mut camera_pos = [0.0, 1.65, -1.6];
     let mut yaw: f64 = 0.0;
-    let mut pitch: f64 = 0.0;
+    let mut pitch: f64 = -0.22;
     let velocidad_movimiento = 0.06;
     let velocidad_giro = 0.03;
     let aspect = WIDTH as f64 / HEIGHT as f64;
-    let light_dir = normalize([0.5, 0.5, 1.0]);
     let mut fb = Framebuffer::new(WIDTH, HEIGHT, Color::BLACK);
 
     while !rl.window_should_close() {
@@ -110,16 +102,36 @@ fn main() {
                 ];
                 let ray = Ray::new(camera_pos, dir);
 
-                for objeto in &objetos {
-                    if let Some(t) = objeto.intersect(&ray) {
-                        let hit = ray.point_at(t);
-                        let normal = objeto.normal(hit);
-                        let (u, v) = objeto.uv(hit);
-                        let albedo = objeto.textura().albedo(u, v);
-                        let shininess = objeto.textura().brillo();
-                        let color = sombrear(ray.direction, normal, light_dir, albedo, shininess);
-                        fb.set_pixel_depth(x, y, color, t);
+                let mut impacto_cercano: Option<(&Sphere, f64)> = None;
+
+                for bola in &bolas {
+                    if let Some(t) = bola.intersect(&ray) {
+                        let reemplazar = impacto_cercano
+                            .map(|(_, distancia)| t < distancia)
+                            .unwrap_or(true);
+
+                        if reemplazar {
+                            impacto_cercano = Some((bola, t));
+                        }
                     }
+                }
+
+                if let Some((bola, t)) = impacto_cercano {
+                    let hit = ray.point_at(t);
+                    let normal = bola.normal(hit);
+                    let (u, v) = bola.uv(hit);
+                    let albedo = bola.textura().albedo(u, v);
+                    let shininess = bola.textura().brillo();
+                    let color = sombrear_puntual(
+                        ray.direction,
+                        hit,
+                        normal,
+                        LUZ_TECHO,
+                        COLOR_LUZ,
+                        albedo,
+                        shininess,
+                    );
+                    fb.set_pixel_depth(x, y, color, t);
                 }
             }
         }

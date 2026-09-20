@@ -54,6 +54,91 @@ impl Textura for Canica {
     }
 }
 
+/// Textura procedural de una bola de billar. El numero 0 identifica la blanca.
+pub struct BolaBillar {
+    pub numero: u8,
+    pub color: Albedo,
+    pub rayada: bool,
+}
+
+impl BolaBillar {
+    pub fn new(numero: u8, color: Albedo, rayada: bool) -> Self {
+        BolaBillar { numero, color, rayada }
+    }
+}
+
+impl Textura for BolaBillar {
+    fn albedo(&self, u: f64, v: f64) -> Albedo {
+        if self.numero == 0 {
+            return [0.96, 0.95, 0.88];
+        }
+
+        let blanco = [0.96, 0.95, 0.88];
+        let mut resultado = if self.rayada && !(0.34..=0.66).contains(&v) {
+            blanco
+        } else {
+            self.color
+        };
+
+        // Dos discos numerados en lados opuestos de la esfera.
+        for centro_u in [0.0, 0.5] {
+            let du = (u - centro_u + 0.5).rem_euclid(1.0) - 0.5;
+            let dv = v - 0.5;
+
+            let radio_horizontal = 0.055;
+            let radio_vertical = 0.105;
+
+            let x = du / radio_horizontal;
+            let y = dv / radio_vertical;
+
+            if x * x + y * y <= 1.0 {
+                resultado = blanco;
+
+                if numero_visible(self.numero, x, y) {
+                    return [0.01, 0.01, 0.01];
+                }
+            }
+        }
+        resultado
+    }
+
+    fn brillo(&self) -> f64 {
+        100.0
+    }
+}
+
+fn pixel_digito(digito: u8, x: f64, y: f64) -> bool {
+    const DIGITOS: [[u8; 5]; 10] = [
+        [0b111, 0b101, 0b101, 0b101, 0b111],
+        [0b010, 0b010, 0b010, 0b110, 0b010],
+        [0b111, 0b100, 0b111, 0b001, 0b111],
+        [0b111, 0b001, 0b011, 0b001, 0b111],
+        [0b001, 0b001, 0b111, 0b101, 0b101],
+        [0b111, 0b001, 0b111, 0b100, 0b111],
+        [0b111, 0b101, 0b111, 0b100, 0b111],
+        [0b001, 0b001, 0b011, 0b001, 0b111],
+        [0b111, 0b101, 0b111, 0b101, 0b111],
+        [0b001, 0b001, 0b111, 0b101, 0b111],
+    ];
+
+    if digito > 9 || !(-0.5..=0.5).contains(&x) || !(-0.75..=0.75).contains(&y) {
+        return false;
+    }
+
+    let columna = ((x + 0.5) * 3.0).floor().clamp(0.0, 2.0) as usize;
+    let fila = ((0.75 - y) / 1.5 * 5.0).floor().clamp(0.0, 4.0) as usize;
+    DIGITOS[digito as usize][fila] & (1 << (2 - columna)) != 0
+}
+
+fn numero_visible(numero: u8, x: f64, y: f64) -> bool {
+    if numero < 10 {
+        pixel_digito(numero, x * 0.48, y * 0.95)
+    } else {
+        pixel_digito(numero / 10, (x + 0.32) / 0.55, y * 0.60)
+            || pixel_digito(numero % 10, (x - 0.32) / 0.55, y * 0.82)
+    }
+}
+
 /// Patron de tablero de ajedrez procedural, util para ver el mapeo UV.
 pub struct Tablero {
     pub color_a: Albedo,
@@ -158,5 +243,67 @@ pub fn sombrear(
     let b = (albedo[2] * diffuse + specular * 0.5).clamp(0.0, 1.0) * 255.0;
 
     Color::new(r as u8, g as u8, b as u8, 255)
+}
+
+/// Iluminacion Blinn-Phong producida por una luz puntual fija en el mundo.
+pub fn sombrear_puntual(
+    ray_dir: [f64; 3],
+    punto: [f64; 3],
+    normal: [f64; 3],
+    posicion_luz: [f64; 3],
+    color_luz: Albedo,
+    albedo: Albedo,
+    shininess: f64,
+) -> Color {
+    let hacia_luz = [
+        posicion_luz[0] - punto[0],
+        posicion_luz[1] - punto[1],
+        posicion_luz[2] - punto[2],
+    ];
+    let distancia_cuadrada = hacia_luz[0] * hacia_luz[0]
+        + hacia_luz[1] * hacia_luz[1]
+        + hacia_luz[2] * hacia_luz[2];
+    let distancia = distancia_cuadrada.sqrt().max(1e-9);
+    let light_dir = [
+        hacia_luz[0] / distancia,
+        hacia_luz[1] / distancia,
+        hacia_luz[2] / distancia,
+    ];
+
+    let diffuse = (normal[0] * light_dir[0]
+        + normal[1] * light_dir[1]
+        + normal[2] * light_dir[2])
+        .max(0.0);
+    let view_dir = [-ray_dir[0], -ray_dir[1], -ray_dir[2]];
+    let half = [
+        light_dir[0] + view_dir[0],
+        light_dir[1] + view_dir[1],
+        light_dir[2] + view_dir[2],
+    ];
+    let half_len = (half[0] * half[0] + half[1] * half[1] + half[2] * half[2])
+        .sqrt()
+        .max(1e-9);
+    let half_norm = [half[0] / half_len, half[1] / half_len, half[2] / half_len];
+    let spec_dot = (normal[0] * half_norm[0]
+        + normal[1] * half_norm[1]
+        + normal[2] * half_norm[2])
+        .max(0.0);
+    let specular = if shininess > 0.0 {
+        spec_dot.powf(shininess)
+    } else {
+        0.0
+    };
+
+    let atenuacion = 1.0 / (1.0 + 0.025 * distancia_cuadrada);
+    let ambiente = 0.075;
+    let canal = |i: usize| {
+        ((albedo[i] * ambiente
+            + albedo[i] * color_luz[i] * diffuse * atenuacion
+            + color_luz[i] * specular * 0.65 * atenuacion)
+            .clamp(0.0, 1.0)
+            * 255.0) as u8
+    };
+
+    Color::new(canal(0), canal(1), canal(2), 255)
 }
 
