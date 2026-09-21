@@ -1,8 +1,65 @@
 use crate::rayIntersect::{Objeto, Ray};
-use crate::sphere::Sphere;
 use crate::textura::{Canica, ColorSolido, Textura};
 
 const EPSILON: f64 = 0.0001;
+const RADIO_TRONERA: f64 = 0.225;
+// La tela termina en y = 0.55; este pequeno desplazamiento evita parpadeos.
+const ALTURA_TRONERA: f64 = 0.552;
+
+/// Circulo horizontal sin volumen, utilizado para representar una tronera
+/// completamente plana sobre la superficie de la mesa.
+pub struct DiscoHorizontal {
+    centro: [f64; 3],
+    radio: f64,
+    textura: Box<dyn Textura>,
+}
+
+impl DiscoHorizontal {
+    pub fn new(centro: [f64; 3], radio: f64, textura: Box<dyn Textura>) -> Self {
+        DiscoHorizontal {
+            centro,
+            radio,
+            textura,
+        }
+    }
+}
+
+impl Objeto for DiscoHorizontal {
+    fn intersect(&self, ray: &Ray) -> Option<f64> {
+        if ray.direction[1].abs() < EPSILON {
+            return None;
+        }
+
+        let t = (self.centro[1] - ray.origin[1]) / ray.direction[1];
+        if t <= EPSILON {
+            return None;
+        }
+
+        let punto = ray.point_at(t);
+        let dx = punto[0] - self.centro[0];
+        let dz = punto[2] - self.centro[2];
+        if dx * dx + dz * dz <= self.radio * self.radio {
+            Some(t)
+        } else {
+            None
+        }
+    }
+
+    fn normal(&self, _punto: [f64; 3]) -> [f64; 3] {
+        [0.0, 1.0, 0.0]
+    }
+
+    fn uv(&self, punto: [f64; 3]) -> (f64, f64) {
+        (
+            0.5 + (punto[0] - self.centro[0]) / (2.0 * self.radio),
+            0.5 + (punto[2] - self.centro[2]) / (2.0 * self.radio),
+        )
+    }
+
+    fn textura(&self) -> &dyn Textura {
+        self.textura.as_ref()
+    }
+}
 
 /// Prisma rectangular alineado con los ejes. Permite construir el tablero,
 /// el cuerpo y los rieles con una sola primitiva economica.
@@ -167,17 +224,21 @@ pub fn crear_mesa() -> Mesa {
         agregar_caja(&mut piezas, [0.0, 0.68, z], [3.05, 0.28, 0.36], madera());
     }
 
-    // Seis troneras negras. Al quedar casi al ras se leen visualmente como huecos.
+    // Seis troneras negras planas, colocadas apenas por encima de la tela.
     let posiciones_troneras = [
-        [-1.48, 0.35, -7.08],
-        [1.48, 0.35, -7.08],
-        [-1.55, 0.35, -4.20],
-        [1.55, 0.35, -4.20],
-        [-1.48, 0.35, -1.32],
-        [1.48, 0.35, -1.32],
+        [-1.48, ALTURA_TRONERA, -7.08],
+        [1.48, ALTURA_TRONERA, -7.08],
+        [-1.55, ALTURA_TRONERA, -4.20],
+        [1.55, ALTURA_TRONERA, -4.20],
+        [-1.48, ALTURA_TRONERA, -1.32],
+        [1.48, ALTURA_TRONERA, -1.32],
     ];
     for posicion in posiciones_troneras {
-        piezas.push(Box::new(Sphere::new(posicion, 0.35, negro())));
+        piezas.push(Box::new(DiscoHorizontal::new(
+            posicion,
+            RADIO_TRONERA,
+            negro(),
+        )));
     }
 
     Mesa {

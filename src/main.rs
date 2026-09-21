@@ -1,7 +1,6 @@
 mod framebuffer;
 mod rayIntersect;
 mod sphere;
-mod cubo;
 mod textura;
 mod billar;
 mod mesa;
