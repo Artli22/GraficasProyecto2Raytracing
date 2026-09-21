@@ -4,11 +4,12 @@ mod sphere;
 mod cubo;
 mod textura;
 mod billar;
+mod mesa;
 
 use framebuffer::Framebuffer;
 use rayIntersect::{Objeto, Ray, cross, escala, normalize, suma};
-use sphere::Sphere;
 use billar::crear_bolas;
+use mesa::crear_mesa;
 use textura::sombrear_puntual;
 use raylib::prelude::*;
 
@@ -27,13 +28,30 @@ fn direccion_camara(yaw: f64, pitch: f64) -> [f64; 3] {
     ]
 }
 
+/// Alterna entre modo ventana y pantalla completa al presionar F11.
+fn controlar_pantalla_completa(rl: &mut RaylibHandle) {
+    if rl.is_key_pressed(KeyboardKey::KEY_F11) {
+        rl.toggle_fullscreen();
+    }
+}
+
+/// Dibuja un contador de FPS legible en la esquina superior izquierda.
+fn dibujar_fps<D: RaylibDraw>(d: &mut D, fps: u32) {
+    let texto = format!("FPS: {}", fps);
+    d.draw_rectangle(8, 8, 112, 34, Color::new(0, 0, 0, 180));
+    d.draw_text(&texto, 16, 14, 20, Color::YELLOW);
+}
+
 fn main() {
     let (mut rl, thread) = raylib::init()
         .size(WIDTH, HEIGHT)
         .title("Ray Tracing - Bolas de billar")
+        .resizable()
         .build();
+    rl.set_target_fps(60);
 
     let bolas = crear_bolas();
+    let mesa = crear_mesa();
 
     // Una sola textura de GPU reutilizada cada frame: subir 480,000 pixeles
     // de una vez es mucho mas rapido que llamar draw_pixel por cada uno.
@@ -44,7 +62,7 @@ fn main() {
 
     // Camara libre: se mueve en sus propios ejes (adelante/atras, strafe, arriba/abajo)
     // y gira con yaw (su propio eje Y) y pitch (arriba/abajo).
-    let mut camera_pos = [0.0, 1.65, -1.6];
+    let mut camera_pos = [0.0, 1.65, 0.70];
     let mut yaw: f64 = 0.0;
     let mut pitch: f64 = -0.22;
     let velocidad_movimiento = 0.06;
@@ -53,6 +71,8 @@ fn main() {
     let mut fb = Framebuffer::new(WIDTH, HEIGHT, Color::BLACK);
 
     while !rl.window_should_close() {
+        controlar_pantalla_completa(&mut rl);
+
         if rl.is_key_down(KeyboardKey::KEY_LEFT) {
             yaw -= velocidad_giro;
         }
@@ -102,7 +122,7 @@ fn main() {
                 ];
                 let ray = Ray::new(camera_pos, dir);
 
-                let mut impacto_cercano: Option<(&Sphere, f64)> = None;
+                let mut impacto_cercano: Option<(&dyn Objeto, f64)> = None;
 
                 for bola in &bolas {
                     if let Some(t) = bola.intersect(&ray) {
@@ -111,17 +131,27 @@ fn main() {
                             .unwrap_or(true);
 
                         if reemplazar {
-                            impacto_cercano = Some((bola, t));
+                            impacto_cercano = Some((bola as &dyn Objeto, t));
                         }
                     }
                 }
 
-                if let Some((bola, t)) = impacto_cercano {
+                if let Some((pieza, t)) = mesa.intersectar(&ray) {
+                    let reemplazar = impacto_cercano
+                        .map(|(_, distancia)| t < distancia)
+                        .unwrap_or(true);
+
+                    if reemplazar {
+                        impacto_cercano = Some((pieza, t));
+                    }
+                }
+
+                if let Some((objeto, t)) = impacto_cercano {
                     let hit = ray.point_at(t);
-                    let normal = bola.normal(hit);
-                    let (u, v) = bola.uv(hit);
-                    let albedo = bola.textura().albedo(u, v);
-                    let shininess = bola.textura().brillo();
+                    let normal = objeto.normal(hit);
+                    let (u, v) = objeto.uv(hit);
+                    let albedo = objeto.textura().albedo(u, v);
+                    let shininess = objeto.textura().brillo();
                     let color = sombrear_puntual(
                         ray.direction,
                         hit,
@@ -136,12 +166,29 @@ fn main() {
             }
         }
 
+        let fps = rl.get_fps();
+        let ancho_pantalla = rl.get_screen_width();
+        let alto_pantalla = rl.get_screen_height();
+        let escala_x = ancho_pantalla as f32 / WIDTH as f32;
+        let escala_y = alto_pantalla as f32 / HEIGHT as f32;
+        let escala_pantalla = escala_x.min(escala_y);
+        let desplazamiento_x =
+            (ancho_pantalla as f32 - WIDTH as f32 * escala_pantalla) * 0.5;
+        let desplazamiento_y =
+            (alto_pantalla as f32 - HEIGHT as f32 * escala_pantalla) * 0.5;
+
         let mut d = rl.begin_drawing(&thread);
         d.clear_background(Color::BLACK);
         pantalla
             .update_texture(fb.as_bytes())
             .expect("no se pudo actualizar la textura de pantalla");
-        d.draw_texture(&pantalla, 0, 0, Color::WHITE);
+        d.draw_texture_ex(
+            &pantalla,
+            Vector2::new(desplazamiento_x, desplazamiento_y),
+            0.0,
+            escala_pantalla,
+            Color::WHITE,
+        );
+        dibujar_fps(&mut d, fps);
     }
 }
-
