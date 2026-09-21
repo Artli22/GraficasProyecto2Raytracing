@@ -1,5 +1,5 @@
 use crate::rayIntersect::{Objeto, Ray};
-use crate::textura::{Canica, ColorSolido, Textura};
+use crate::textura::{ColorSolido, Fieltro, TexturaMadera, Textura};
 
 const EPSILON: f64 = 0.0001;
 const RADIO_TRONERA: f64 = 0.225;
@@ -186,11 +186,17 @@ impl Mesa {
 }
 
 fn madera() -> Box<dyn Textura> {
-    Box::new(Canica::new([0.30, 0.085, 0.025], 24.0))
+    Box::new(TexturaMadera::new(
+        [0.30, 0.085, 0.025],
+        [0.14, 0.038, 0.010],
+        6.0,
+        90.0,
+        24.0,
+    ))
 }
 
 fn pano_verde() -> Box<dyn Textura> {
-    Box::new(ColorSolido::new([0.025, 0.36, 0.10]))
+    Box::new(Fieltro::new([0.025, 0.36, 0.10], 55.0, 0.35))
 }
 
 fn negro() -> Box<dyn Textura> {

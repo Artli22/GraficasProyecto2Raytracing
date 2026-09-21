@@ -33,22 +33,188 @@ impl Textura for ColorSolido {
     }
 }
 
-/// Canica: color vidrioso/brillante con especularidad pronunciada.
-pub struct Canica {
-    pub color: Albedo,
+/// Ruido "hash" pseudo-aleatorio en una retícula entera, base para
+/// construir el value noise. Determinista y sin dependencias externas.
+/// Solo se invoca al construir la tabla precalculada (una vez), nunca
+/// por pixel, ya que usa sin(), una funcion trascendental costosa.
+fn hash_ruido(x: f64, y: f64) -> f64 {
+    let n = (x * 127.1 + y * 311.7).sin() * 43758.5453;
+    n.fract().abs()
+}
+
+// Lado de la tabla de ruido precalculada. El dominio es toroidal (se repite
+// cada TAMANO_TABLA_RUIDO unidades de reticula), asi que el tejido nunca
+// muestra una costura visible al hacer wrap.
+const TAMANO_TABLA_RUIDO: i64 = 256;
+
+/// Genera, una sola vez, la tabla de valores hash sobre una reticula
+/// TAMANO_TABLA_RUIDO x TAMANO_TABLA_RUIDO. Este es el unico lugar del
+/// programa donde se llama sin() para el ruido de la tela.
+fn generar_tabla_ruido() -> Vec<f64> {
+    let n = TAMANO_TABLA_RUIDO as usize;
+    let mut tabla = Vec::with_capacity(n * n);
+    for y in 0..n {
+        for x in 0..n {
+            tabla.push(hash_ruido(x as f64, y as f64));
+        }
+    }
+    tabla
+}
+
+fn tabla_lookup(tabla: &[f64], x: i64, y: i64) -> f64 {
+    let n = TAMANO_TABLA_RUIDO;
+    let xi = x.rem_euclid(n) as usize;
+    let yi = y.rem_euclid(n) as usize;
+    tabla[yi * n as usize + xi]
+}
+
+/// Value noise con interpolacion suave (smoothstep) entre las 4 esquinas
+/// de la celda de la reticula que contiene (x, y). Lee los valores hash
+/// de la tabla precalculada (simples lookups + aritmetica, sin sin())
+/// en vez de recalcularlos por pixel.
+fn valor_ruido(tabla: &[f64], x: f64, y: f64) -> f64 {
+    let x0 = x.floor();
+    let y0 = y.floor();
+    let fx = x - x0;
+    let fy = y - y0;
+    let ix0i = x0 as i64;
+    let iy0i = y0 as i64;
+
+    let h00 = tabla_lookup(tabla, ix0i, iy0i);
+    let h10 = tabla_lookup(tabla, ix0i + 1, iy0i);
+    let h01 = tabla_lookup(tabla, ix0i, iy0i + 1);
+    let h11 = tabla_lookup(tabla, ix0i + 1, iy0i + 1);
+
+    // Interpolacion suave (evita las "costuras" lineales de una interpolacion lineal simple).
+    let sx = fx * fx * (3.0 - 2.0 * fx);
+    let sy = fy * fy * (3.0 - 2.0 * fy);
+
+    let ix0 = h00 + (h10 - h00) * sx;
+    let ix1 = h01 + (h11 - h01) * sx;
+    ix0 + (ix1 - ix0) * sy
+}
+
+/// Ruido fractal (fbm): suma varias octavas de `valor_ruido` a frecuencias
+/// crecientes y amplitudes decrecientes. Esto agrega detalle fino sobre
+/// una variacion mas amplia, tal como se ve el grano irregular de una tela.
+/// Cada octava es ahora solo lookups + interpolacion, sin trigonometria.
+fn fbm(tabla: &[f64], x: f64, y: f64, octavas: u32) -> f64 {
+    let mut total = 0.0;
+    let mut amplitud = 0.5;
+    let mut frecuencia = 1.0;
+    let mut amplitud_maxima = 0.0;
+
+    for _ in 0..octavas {
+        total += valor_ruido(tabla, x * frecuencia, y * frecuencia) * amplitud;
+        amplitud_maxima += amplitud;
+        amplitud *= 0.5;
+        frecuencia *= 2.0;
+    }
+
+    total / amplitud_maxima
+}
+
+/// Simula el tejido de un paño de billar: grano fino e irregular generado
+/// con ruido fractal, sin ningun patron geometrico repetitivo. Sin
+/// highlight especular, ya que la tela es mate. El ruido se precalcula
+/// una sola vez en `new()`; renderizar solo hace lookups en la tabla,
+/// eliminando por completo el costo de sin() del bucle por pixel.
+pub struct Fieltro {
+    pub color_base: Albedo,
+    pub escala: f64,
+    pub variacion: f64,
+    tabla_ruido: Vec<f64>,
+}
+
+impl Fieltro {
+    pub fn new(color_base: Albedo, escala: f64, variacion: f64) -> Self {
+        Fieltro {
+            color_base,
+            escala,
+            variacion,
+            tabla_ruido: generar_tabla_ruido(),
+        }
+    }
+}
+
+impl Textura for Fieltro {
+    fn albedo(&self, u: f64, v: f64) -> Albedo {
+        // fbm regresa un valor centrado alrededor de ~0.5; lo usamos para
+        // aclarar/oscurecer el color base de forma organica e irregular.
+        let ruido = fbm(&self.tabla_ruido, u * self.escala, v * self.escala, 4);
+        let factor = 1.0 + (ruido - 0.5) * self.variacion;
+
+        [
+            (self.color_base[0] * factor).clamp(0.0, 1.0),
+            (self.color_base[1] * factor).clamp(0.0, 1.0),
+            (self.color_base[2] * factor).clamp(0.0, 1.0),
+        ]
+    }
+
+    fn brillo(&self) -> f64 {
+        0.0
+    }
+}
+
+/// Madera tallada/tratada: veta direccional procedural sobre un color base,
+/// mas la especularidad del barniz. Reutiliza la misma tabla de ruido
+/// precalculada y las mismas funciones (`fbm`, `valor_ruido`, `tabla_lookup`)
+/// que `Fieltro`, asi que tampoco llama sin() en el bucle por pixel.
+///
+/// La diferencia frente al ruido isotropico de la tela es la anisotropia:
+/// se usa una frecuencia baja a lo largo de la veta (`escala_veta`) y una
+/// frecuencia alta en la direccion perpendicular (`escala_ancho`), lo que
+/// estira el mismo ruido en lineas alargadas en vez de manchas uniformes.
+pub struct TexturaMadera {
+    pub color_base: Albedo,
+    pub color_veta: Albedo,
+    pub escala_veta: f64,
+    pub escala_ancho: f64,
     pub brillo: f64,
+    tabla_ruido: Vec<f64>,
 }
 
-impl Canica {
-    pub fn new(color: Albedo, brillo: f64) -> Self {
-        Canica { color, brillo }
+impl TexturaMadera {
+    pub fn new(
+        color_base: Albedo,
+        color_veta: Albedo,
+        escala_veta: f64,
+        escala_ancho: f64,
+        brillo: f64,
+    ) -> Self {
+        TexturaMadera {
+            color_base,
+            color_veta,
+            escala_veta,
+            escala_ancho,
+            brillo,
+            tabla_ruido: generar_tabla_ruido(),
+        }
     }
 }
 
-impl Textura for Canica {
-    fn albedo(&self, _u: f64, _v: f64) -> Albedo {
-        self.color
+impl Textura for TexturaMadera {
+    fn albedo(&self, u: f64, v: f64) -> Albedo {
+        // Frecuencia distinta por eje: estira el mismo ruido en vetas
+        // alargadas en vez de manchas isotropicas como en la tela.
+        let ruido = fbm(
+            &self.tabla_ruido,
+            u * self.escala_ancho,
+            v * self.escala_veta,
+            4,
+        );
+
+        // Eleva el contraste para que las vetas oscuras se vean como
+        // lineas mas definidas en vez de un degradado suave.
+        let intensidad_veta = ruido.powf(2.5).clamp(0.0, 1.0);
+
+        [
+            self.color_base[0] * (1.0 - intensidad_veta) + self.color_veta[0] * intensidad_veta,
+            self.color_base[1] * (1.0 - intensidad_veta) + self.color_veta[1] * intensidad_veta,
+            self.color_base[2] * (1.0 - intensidad_veta) + self.color_veta[2] * intensidad_veta,
+        ]
     }
+
     fn brillo(&self) -> f64 {
         self.brillo
     }
@@ -157,43 +323,6 @@ impl Textura for Tablero {
         let fila = (u * self.escala).floor() as i64;
         let columna = (v * self.escala).floor() as i64;
         if (fila + columna) % 2 == 0 { self.color_a } else { self.color_b }
-    }
-}
-
-/// Textura cargada desde un archivo de imagen (PNG, JPG, etc.).
-pub struct ImagenTextura {
-    ancho: i32,
-    alto: i32,
-    pixeles: Vec<Albedo>,
-}
-
-impl ImagenTextura {
-    pub fn load(path: &str) -> Result<Self, String> {
-        let mut imagen = Image::load_image(path).map_err(|e| e.to_string())?;
-        let ancho = imagen.width();
-        let alto = imagen.height();
-        let mut pixeles = Vec::with_capacity((ancho * alto) as usize);
-        for y in 0..alto {
-            for x in 0..ancho {
-                let color = imagen.get_color(x, y);
-                pixeles.push([
-                    color.r as f64 / 255.0,
-                    color.g as f64 / 255.0,
-                    color.b as f64 / 255.0,
-                ]);
-            }
-        }
-        Ok(ImagenTextura { ancho, alto, pixeles })
-    }
-}
-
-impl Textura for ImagenTextura {
-    fn albedo(&self, u: f64, v: f64) -> Albedo {
-        let u = u.rem_euclid(1.0);
-        let v = v.rem_euclid(1.0);
-        let x = ((u * self.ancho as f64) as i32).clamp(0, self.ancho - 1);
-        let y = (((1.0 - v) * self.alto as f64) as i32).clamp(0, self.alto - 1);
-        self.pixeles[(y * self.ancho + x) as usize]
     }
 }
 
@@ -306,4 +435,3 @@ pub fn sombrear_puntual(
 
     Color::new(canal(0), canal(1), canal(2), 255)
 }
-
