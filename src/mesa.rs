@@ -267,20 +267,13 @@ pub fn crear_mesa() -> Mesa {
         )));
     }
 
-    // Cuatro patas macizas: desde el piso y=0 hasta dentro del cuerpo.
-    // Se solapan 0.02 unidades con el faldon para evitar separaciones visibles.
+    // Cuatro patas torneadas; el extremo superior se inserta en el cuerpo.
     let altura_pata = ELEVACION_MESA + 0.07;
     for x in [-1.35, 1.35] {
         for z in [-6.80, -1.60] {
-            agregar_caja(
-                &mut piezas,
-                [x, altura_pata * 0.5, z],
-                [0.40, altura_pata, 0.40],
-                madera(),
-            );
+            piezas.push(Box::new(crate::patas::PataTorneada::new(x, z, altura_pata)));
         }
     }
-
     // La envolvente incluye las patas y el taco elevado.
     piezas.push(Box::new(crate::taco::crear_taco()));
 
@@ -307,7 +300,7 @@ mod tests {
                 let (_, t) = mesa
                     .intersectar(&ray)
                     .expect("la envolvente debe incluir cada pata");
-                assert!((t - 0.95).abs() < 1e-8);
+                assert!((0.90..1.10).contains(&t));
             }
         }
         assert!(

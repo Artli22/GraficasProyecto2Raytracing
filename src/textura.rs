@@ -10,6 +10,10 @@ pub type Albedo = [f64; 3];
 /// Requiere Send + Sync por la misma razon que `Objeto`: el render en
 /// paralelo (rayon) comparte referencias a las texturas entre hilos.
 pub trait Textura: Send + Sync {
+    /// Brillo propio visible; no lanza rayos ni simula iluminacion indirecta.
+    fn emision(&self) -> f64 {
+        0.0
+    }
     /// Devuelve el albedo en las coordenadas UV (u, v), ambas en [0.0, 1.0].
     fn albedo(&self, u: f64, v: f64) -> Albedo;
     /// Ancho del highlight especular; 0.0 significa sin brillo.
@@ -235,7 +239,11 @@ pub struct BolaBillar {
 
 impl BolaBillar {
     pub fn new(numero: u8, color: Albedo, rayada: bool) -> Self {
-        BolaBillar { numero, color, rayada }
+        BolaBillar {
+            numero,
+            color,
+            rayada,
+        }
     }
 }
 
@@ -320,7 +328,11 @@ pub struct Tablero {
 
 impl Tablero {
     pub fn new(color_a: Albedo, color_b: Albedo, escala: f64) -> Self {
-        Tablero { color_a, color_b, escala }
+        Tablero {
+            color_a,
+            color_b,
+            escala,
+        }
     }
 }
 
@@ -328,7 +340,11 @@ impl Textura for Tablero {
     fn albedo(&self, u: f64, v: f64) -> Albedo {
         let fila = (u * self.escala).floor() as i64;
         let columna = (v * self.escala).floor() as i64;
-        if (fila + columna) % 2 == 0 { self.color_a } else { self.color_b }
+        if (fila + columna) % 2 == 0 {
+            self.color_a
+        } else {
+            self.color_b
+        }
     }
 }
 
@@ -357,7 +373,8 @@ pub fn sombrear(
     shininess: f64,
 ) -> Color {
     // Difusión clásica
-    let diffuse = (normal[0] * light_dir[0] + normal[1] * light_dir[1] + normal[2] * light_dir[2]).max(0.0);
+    let diffuse =
+        (normal[0] * light_dir[0] + normal[1] * light_dir[1] + normal[2] * light_dir[2]).max(0.0);
 
     // Especularidad Blinn-Phong: half-vector entre luz y vista
     let neg_ray = [-ray_dir[0], -ray_dir[1], -ray_dir[2]]; // hacia la cámara
@@ -369,8 +386,13 @@ pub fn sombrear(
     let half_len = (half[0] * half[0] + half[1] * half[1] + half[2] * half[2]).sqrt();
     let half_norm = [half[0] / half_len, half[1] / half_len, half[2] / half_len];
 
-    let spec_dot = (normal[0] * half_norm[0] + normal[1] * half_norm[1] + normal[2] * half_norm[2]).max(0.0);
-    let specular = if shininess > 0.0 { spec_dot.powf(shininess) } else { 0.0 };
+    let spec_dot =
+        (normal[0] * half_norm[0] + normal[1] * half_norm[1] + normal[2] * half_norm[2]).max(0.0);
+    let specular = if shininess > 0.0 {
+        spec_dot.powf(shininess)
+    } else {
+        0.0
+    };
 
     // Combinar: componente difusa teñida + highlight blanco
     let r = (albedo[0] * diffuse + specular * 0.5).clamp(0.0, 1.0) * 255.0;
@@ -395,9 +417,8 @@ pub fn sombrear_puntual(
         posicion_luz[1] - punto[1],
         posicion_luz[2] - punto[2],
     ];
-    let distancia_cuadrada = hacia_luz[0] * hacia_luz[0]
-        + hacia_luz[1] * hacia_luz[1]
-        + hacia_luz[2] * hacia_luz[2];
+    let distancia_cuadrada =
+        hacia_luz[0] * hacia_luz[0] + hacia_luz[1] * hacia_luz[1] + hacia_luz[2] * hacia_luz[2];
     let distancia = distancia_cuadrada.sqrt().max(1e-9);
     let light_dir = [
         hacia_luz[0] / distancia,
@@ -405,10 +426,8 @@ pub fn sombrear_puntual(
         hacia_luz[2] / distancia,
     ];
 
-    let diffuse = (normal[0] * light_dir[0]
-        + normal[1] * light_dir[1]
-        + normal[2] * light_dir[2])
-        .max(0.0);
+    let diffuse =
+        (normal[0] * light_dir[0] + normal[1] * light_dir[1] + normal[2] * light_dir[2]).max(0.0);
     let view_dir = [-ray_dir[0], -ray_dir[1], -ray_dir[2]];
     let half = [
         light_dir[0] + view_dir[0],
@@ -419,10 +438,8 @@ pub fn sombrear_puntual(
         .sqrt()
         .max(1e-9);
     let half_norm = [half[0] / half_len, half[1] / half_len, half[2] / half_len];
-    let spec_dot = (normal[0] * half_norm[0]
-        + normal[1] * half_norm[1]
-        + normal[2] * half_norm[2])
-        .max(0.0);
+    let spec_dot =
+        (normal[0] * half_norm[0] + normal[1] * half_norm[1] + normal[2] * half_norm[2]).max(0.0);
     let specular = if shininess > 0.0 {
         spec_dot.powf(shininess)
     } else {
@@ -440,4 +457,15 @@ pub fn sombrear_puntual(
     };
 
     Color::new(canal(0), canal(1), canal(2), 255)
+}
+
+/// Mezcla brillo propio visible con el color iluminado. El marco oscuro conserva su color.
+pub fn aplicar_emision(color: Color, albedo: Albedo, emision: f64) -> Color {
+    if emision <= 0.0 {
+        return color;
+    }
+    let e = emision.clamp(0.0, 1.0);
+    let canal =
+        |c: u8, i: usize| ((1.0 - e) * c as f64 + e * albedo[i] * 255.0).clamp(0.0, 255.0) as u8;
+    Color::new(canal(color.r, 0), canal(color.g, 1), canal(color.b, 2), 255)
 }

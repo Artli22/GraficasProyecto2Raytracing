@@ -3,6 +3,26 @@ use crate::textura::{Albedo, ColorSolido, Textura, TexturaMadera};
 
 const EPS: f64 = 1e-7;
 
+// Edita estos limites para cambiar el tamano: geometria y camara los comparten.
+pub const X_MIN: f64 = -8.0;
+pub const X_MAX: f64 = 8.0;
+pub const Y_MIN: f64 = 0.0; // Piso.
+pub const Y_MAX: f64 = 7.0; // Techo.
+pub const Z_MIN: f64 = -14.0;
+pub const Z_MAX: f64 = 6.0;
+pub const MARGEN_CAMARA: f64 = 0.20;
+
+/// Mantiene la camara dentro, dejando una separacion de cada superficie.
+/// Limitar cada eje permite deslizarse junto a paredes y detenerse en esquinas.
+pub fn limitar_camara(posicion: &mut [f64; 3]) {
+    let minimo = [X_MIN, Y_MIN, Z_MIN];
+    let maximo = [X_MAX, Y_MAX, Z_MAX];
+    for eje in 0..3 {
+        posicion[eje] =
+            posicion[eje].clamp(minimo[eje] + MARGEN_CAMARA, maximo[eje] - MARGEN_CAMARA);
+    }
+}
+
 /// Rectangulo finito alineado con un plano coordenado, sin grosor.
 pub struct Panel {
     eje: usize,
@@ -125,16 +145,23 @@ impl Habitacion {
     }
 }
 
-/// Interior de 10 x 14 unidades y 5.2 de alto; incluye la camara inicial.
+/// Interior configurado por los limites compartidos con la camara.
 pub fn crear_habitacion() -> Habitacion {
+    assert!(MARGEN_CAMARA > 0.0);
+    for (min, max) in [(X_MIN, X_MAX), (Y_MIN, Y_MAX), (Z_MIN, Z_MAX)] {
+        assert!(
+            max - min > 2.0 * MARGEN_CAMARA,
+            "habitacion demasiado pequena para el margen de camara"
+        );
+    }
     let gris = || Box::new(ColorSolido::new([0.56, 0.55, 0.52])) as Box<dyn Textura>;
     Habitacion {
         paneles: vec![
             Panel::new(
                 1,
-                0.0,
-                [-5.0, -11.0],
-                [5.0, 3.0],
+                Y_MIN,
+                [X_MIN, Z_MIN],
+                [X_MAX, Z_MAX],
                 1.0,
                 Box::new(PisoTablas {
                     madera: TexturaMadera::new(
@@ -148,23 +175,51 @@ pub fn crear_habitacion() -> Habitacion {
             ),
             Panel::new(
                 1,
-                5.2,
-                [-5.0, -11.0],
-                [5.0, 3.0],
+                Y_MAX,
+                [X_MIN, Z_MIN],
+                [X_MAX, Z_MAX],
                 -1.0,
                 Box::new(ColorSolido::new([0.83, 0.82, 0.78])),
             ),
-            Panel::new(0, -5.0, [0.0, -11.0], [5.2, 3.0], 1.0, gris()),
-            Panel::new(0, 5.0, [0.0, -11.0], [5.2, 3.0], -1.0, gris()),
-            Panel::new(2, -11.0, [-5.0, 0.0], [5.0, 5.2], 1.0, gris()),
-            Panel::new(2, 3.0, [-5.0, 0.0], [5.0, 5.2], -1.0, gris()),
+            Panel::new(0, X_MIN, [Y_MIN, Z_MIN], [Y_MAX, Z_MAX], 1.0, gris()),
+            Panel::new(0, X_MAX, [Y_MIN, Z_MIN], [Y_MAX, Z_MAX], -1.0, gris()),
+            Panel::new(2, Z_MIN, [X_MIN, Y_MIN], [X_MAX, Y_MAX], 1.0, gris()),
+            Panel::new(2, Z_MAX, [X_MIN, Y_MIN], [X_MAX, Y_MAX], -1.0, gris()),
         ],
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn camara_limites_y_deslizamiento() {
+        let mut p = [-1000.0, -1000.0, -1000.0];
+        limitar_camara(&mut p);
+        assert_eq!(
+            p,
+            [
+                X_MIN + MARGEN_CAMARA,
+                Y_MIN + MARGEN_CAMARA,
+                Z_MIN + MARGEN_CAMARA
+            ]
+        );
+        p = [1000.0; 3];
+        limitar_camara(&mut p);
+        assert_eq!(
+            p,
+            [
+                X_MAX - MARGEN_CAMARA,
+                Y_MAX - MARGEN_CAMARA,
+                Z_MAX - MARGEN_CAMARA
+            ]
+        );
+        p = [1000.0, 2.0, -3.0];
+        limitar_camara(&mut p);
+        assert_eq!(p, [X_MAX - MARGEN_CAMARA, 2.0, -3.0]);
+        p = [0.0, 2.0, 0.0];
+        limitar_camara(&mut p);
+        assert_eq!(p, [0.0, 2.0, 0.0]);
+    }
     #[test]
     fn panel_finito_y_rayo_paralelo() {
         let p = Panel::new(

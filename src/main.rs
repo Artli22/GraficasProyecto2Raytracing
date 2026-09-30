@@ -1,7 +1,9 @@
 mod billar;
 mod framebuffer;
-mod cuarto; 
+mod cuarto;
+mod lampara;
 mod mesa;
+mod patas;
 mod rayIntersect;
 mod sphere;
 mod taco;
@@ -18,7 +20,7 @@ use textura::sombrear_puntual;
 const WIDTH: i32 = 800;
 const HEIGHT: i32 = 600;
 const PITCH_MAX: f64 = 1.5;
-const LUZ_TECHO: [f64; 3] = [0.0, 4.5, -4.5];
+const LUZ_TECHO: [f64; 3] = lampara::LUZ_POSICION;
 const COLOR_LUZ: [f64; 3] = [1.0, 0.72, 0.30];
 
 /// Direccion hacia la que mira la camara segun su yaw (giro en su eje Y) y pitch (arriba/abajo).
@@ -54,6 +56,7 @@ fn main() {
 
     let bolas = crear_bolas();
     let mesa = crear_mesa();
+    let lampara = lampara::crear_lampara();
     let habitacion = cuarto::crear_habitacion();
 
     // Una sola textura de GPU reutilizada cada frame: subir 480,000 pixeles
@@ -112,6 +115,9 @@ fn main() {
             camera_pos[1] -= velocidad_movimiento;
         }
 
+        // Aplicar despues de TODOS los controles y antes de trazar los rayos.
+        cuarto::limitar_camara(&mut camera_pos);
+
         fb.pixels_mut()
             .par_chunks_mut(WIDTH as usize)
             .enumerate()
@@ -151,6 +157,11 @@ fn main() {
                         }
                     }
 
+                    if let Some((pieza, t)) = lampara.intersectar(&ray) {
+                        if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
+                            impacto_cercano = Some((pieza, t));
+                        }
+                    }
                     let mut es_habitacion = false;
                     if let Some((panel, t)) = habitacion.intersectar(&ray) {
                         if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
@@ -177,11 +188,13 @@ fn main() {
                             albedo,
                             shininess,
                         );
-                        *pixel = if es_habitacion {
+                        let color = if es_habitacion {
                             cuarto::relleno_ambiente(color, albedo)
                         } else {
                             color
                         };
+                        *pixel =
+                            textura::aplicar_emision(color, albedo, objeto.textura().emision());
                     }
                 }
             });
