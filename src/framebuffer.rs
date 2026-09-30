@@ -18,6 +18,11 @@ impl Framebuffer {
         }
     }
 
+    /// Acceso exclusivo a los colores para repartir filas entre trabajadores.
+    pub fn pixels_mut(&mut self) -> &mut [Color] {
+        &mut self.buffer
+    }
+
     /// Reinicia color y profundidad antes de renderizar un nuevo frame.
     pub fn clear(&mut self, background: Color) {
         self.buffer.fill(background);

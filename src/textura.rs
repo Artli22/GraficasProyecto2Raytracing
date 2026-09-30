@@ -7,7 +7,9 @@ use std::f64::consts::PI;
 /// normales, etc. sin tocar la logica de dibujado.
 pub type Albedo = [f64; 3];
 
-pub trait Textura {
+/// Requiere Send + Sync por la misma razon que `Objeto`: el render en
+/// paralelo (rayon) comparte referencias a las texturas entre hilos.
+pub trait Textura: Send + Sync {
     /// Devuelve el albedo en las coordenadas UV (u, v), ambas en [0.0, 1.0].
     fn albedo(&self, u: f64, v: f64) -> Albedo;
     /// Ancho del highlight especular; 0.0 significa sin brillo.
@@ -205,8 +207,12 @@ impl Textura for TexturaMadera {
         );
 
         // Eleva el contraste para que las vetas oscuras se vean como
-        // lineas mas definidas en vez de un degradado suave.
-        let intensidad_veta = ruido.powf(2.5).clamp(0.0, 1.0);
+        // lineas mas definidas en vez de un degradado suave. Se usa un
+        // exponente ENTERO (powi) en vez de fraccionario (powf): powf con
+        // un exponente no entero requiere exp(ln(x)*n) por dentro -otra
+        // funcion trascendental tan cara como el sin() que ya eliminamos-
+        // mientras que powi se resuelve con simples multiplicaciones.
+        let intensidad_veta = ruido.powi(3).clamp(0.0, 1.0);
 
         [
             self.color_base[0] * (1.0 - intensidad_veta) + self.color_veta[0] * intensidad_veta,

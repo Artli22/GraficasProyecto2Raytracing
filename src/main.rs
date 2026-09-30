@@ -1,16 +1,17 @@
+mod billar;
 mod framebuffer;
+mod mesa;
 mod rayIntersect;
 mod sphere;
 mod textura;
-mod billar;
-mod mesa;
 
-use framebuffer::Framebuffer;
-use rayIntersect::{Objeto, Ray, cross, escala, normalize, suma};
 use billar::crear_bolas;
+use framebuffer::Framebuffer;
 use mesa::crear_mesa;
-use textura::sombrear_puntual;
+use rayIntersect::{Objeto, Ray, cross, escala, normalize, suma};
 use raylib::prelude::*;
+use rayon::prelude::*;
+use textura::sombrear_puntual;
 
 const WIDTH: i32 = 800;
 const HEIGHT: i32 = 600;
@@ -108,62 +109,64 @@ fn main() {
             camera_pos[1] -= velocidad_movimiento;
         }
 
-        fb.clear(Color::BLACK);
+        fb.pixels_mut()
+            .par_chunks_mut(WIDTH as usize)
+            .enumerate()
+            .for_each(|(y, fila)| {
+                for (x, pixel) in fila.iter_mut().enumerate() {
+                    *pixel = Color::BLACK;
+                    let u = (x as f64 + 0.5) / WIDTH as f64 * 2.0 - 1.0;
+                    let v = 1.0 - (y as f64 + 0.5) / HEIGHT as f64 * 2.0;
+                    let dir = [
+                        forward[0] + right[0] * u * aspect + up[0] * v,
+                        forward[1] + right[1] * u * aspect + up[1] * v,
+                        forward[2] + right[2] * u * aspect + up[2] * v,
+                    ];
+                    let ray = Ray::new(camera_pos, dir);
 
-        for y in 0..HEIGHT {
-            for x in 0..WIDTH {
-                let u = (x as f64 + 0.5) / WIDTH as f64 * 2.0 - 1.0;
-                let v = 1.0 - (y as f64 + 0.5) / HEIGHT as f64 * 2.0;
-                let dir = [
-                    forward[0] + right[0] * u * aspect + up[0] * v,
-                    forward[1] + right[1] * u * aspect + up[1] * v,
-                    forward[2] + right[2] * u * aspect + up[2] * v,
-                ];
-                let ray = Ray::new(camera_pos, dir);
+                    let mut impacto_cercano: Option<(&dyn Objeto, f64)> = None;
 
-                let mut impacto_cercano: Option<(&dyn Objeto, f64)> = None;
+                    for bola in &bolas {
+                        if let Some(t) = bola.intersect(&ray) {
+                            let reemplazar = impacto_cercano
+                                .map(|(_, distancia)| t < distancia)
+                                .unwrap_or(true);
 
-                for bola in &bolas {
-                    if let Some(t) = bola.intersect(&ray) {
+                            if reemplazar {
+                                impacto_cercano = Some((bola as &dyn Objeto, t));
+                            }
+                        }
+                    }
+
+                    if let Some((pieza, t)) = mesa.intersectar(&ray) {
                         let reemplazar = impacto_cercano
                             .map(|(_, distancia)| t < distancia)
                             .unwrap_or(true);
 
                         if reemplazar {
-                            impacto_cercano = Some((bola as &dyn Objeto, t));
+                            impacto_cercano = Some((pieza, t));
                         }
                     }
-                }
 
-                if let Some((pieza, t)) = mesa.intersectar(&ray) {
-                    let reemplazar = impacto_cercano
-                        .map(|(_, distancia)| t < distancia)
-                        .unwrap_or(true);
-
-                    if reemplazar {
-                        impacto_cercano = Some((pieza, t));
+                    if let Some((objeto, t)) = impacto_cercano {
+                        let hit = ray.point_at(t);
+                        let normal = objeto.normal(hit);
+                        let (u, v) = objeto.uv(hit);
+                        let albedo = objeto.textura().albedo(u, v);
+                        let shininess = objeto.textura().brillo();
+                        let color = sombrear_puntual(
+                            ray.direction,
+                            hit,
+                            normal,
+                            LUZ_TECHO,
+                            COLOR_LUZ,
+                            albedo,
+                            shininess,
+                        );
+                        *pixel = color;
                     }
                 }
-
-                if let Some((objeto, t)) = impacto_cercano {
-                    let hit = ray.point_at(t);
-                    let normal = objeto.normal(hit);
-                    let (u, v) = objeto.uv(hit);
-                    let albedo = objeto.textura().albedo(u, v);
-                    let shininess = objeto.textura().brillo();
-                    let color = sombrear_puntual(
-                        ray.direction,
-                        hit,
-                        normal,
-                        LUZ_TECHO,
-                        COLOR_LUZ,
-                        albedo,
-                        shininess,
-                    );
-                    fb.set_pixel_depth(x, y, color, t);
-                }
-            }
-        }
+            });
 
         let fps = rl.get_fps();
         let ancho_pantalla = rl.get_screen_width();
@@ -171,10 +174,8 @@ fn main() {
         let escala_x = ancho_pantalla as f32 / WIDTH as f32;
         let escala_y = alto_pantalla as f32 / HEIGHT as f32;
         let escala_pantalla = escala_x.min(escala_y);
-        let desplazamiento_x =
-            (ancho_pantalla as f32 - WIDTH as f32 * escala_pantalla) * 0.5;
-        let desplazamiento_y =
-            (alto_pantalla as f32 - HEIGHT as f32 * escala_pantalla) * 0.5;
+        let desplazamiento_x = (ancho_pantalla as f32 - WIDTH as f32 * escala_pantalla) * 0.5;
+        let desplazamiento_y = (alto_pantalla as f32 - HEIGHT as f32 * escala_pantalla) * 0.5;
 
         let mut d = rl.begin_drawing(&thread);
         d.clear_background(Color::BLACK);

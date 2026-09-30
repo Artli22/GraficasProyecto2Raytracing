@@ -23,7 +23,7 @@ impl Ray {
 }
 
 /// Cualquier cuerpo geometrico que un rayo puede golpear (esfera, cubo, etc.).
-pub trait Objeto {
+pub trait Objeto: Send + Sync {
     /// Distancia t al impacto mas cercano, o None si el rayo no lo toca.
     fn intersect(&self, ray: &Ray) -> Option<f64>;
     fn normal(&self, punto: [f64; 3]) -> [f64; 3];
