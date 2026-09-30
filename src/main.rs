@@ -5,9 +5,11 @@ mod lampara;
 mod mesa;
 mod patas;
 mod rayIntersect;
+mod render;
 mod sphere;
 mod taco;
 mod textura;
+mod vasos;
 
 use billar::crear_bolas;
 use framebuffer::Framebuffer;
@@ -15,13 +17,10 @@ use mesa::crear_mesa;
 use rayIntersect::{Objeto, Ray, cross, escala, normalize, suma};
 use raylib::prelude::*;
 use rayon::prelude::*;
-use textura::sombrear_puntual;
 
 const WIDTH: i32 = 800;
 const HEIGHT: i32 = 600;
 const PITCH_MAX: f64 = 1.5;
-const LUZ_TECHO: [f64; 3] = lampara::LUZ_POSICION;
-const COLOR_LUZ: [f64; 3] = [1.0, 0.72, 0.30];
 
 /// Direccion hacia la que mira la camara segun su yaw (giro en su eje Y) y pitch (arriba/abajo).
 fn direccion_camara(yaw: f64, pitch: f64) -> [f64; 3] {
@@ -133,69 +132,45 @@ fn main() {
                     ];
                     let ray = Ray::new(camera_pos, dir);
 
-                    let mut impacto_cercano: Option<(&dyn Objeto, f64)> = None;
+                    *pixel = render::trazar(&ray, &|ray: &Ray| {
+                        let mut impacto_cercano: Option<(&dyn Objeto, f64)> = None;
 
-                    for bola in &bolas {
-                        if let Some(t) = bola.intersect(&ray) {
+                        for bola in &bolas {
+                            if let Some(t) = bola.intersect(ray) {
+                                let reemplazar = impacto_cercano
+                                    .map(|(_, distancia)| t < distancia)
+                                    .unwrap_or(true);
+
+                                if reemplazar {
+                                    impacto_cercano = Some((bola as &dyn Objeto, t));
+                                }
+                            }
+                        }
+
+                        if let Some((pieza, t)) = mesa.intersectar(ray) {
                             let reemplazar = impacto_cercano
                                 .map(|(_, distancia)| t < distancia)
                                 .unwrap_or(true);
 
                             if reemplazar {
-                                impacto_cercano = Some((bola as &dyn Objeto, t));
+                                impacto_cercano = Some((pieza, t));
                             }
                         }
-                    }
 
-                    if let Some((pieza, t)) = mesa.intersectar(&ray) {
-                        let reemplazar = impacto_cercano
-                            .map(|(_, distancia)| t < distancia)
-                            .unwrap_or(true);
-
-                        if reemplazar {
-                            impacto_cercano = Some((pieza, t));
+                        if let Some((pieza, t)) = lampara.intersectar(ray) {
+                            if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
+                                impacto_cercano = Some((pieza, t));
+                            }
                         }
-                    }
-
-                    if let Some((pieza, t)) = lampara.intersectar(&ray) {
-                        if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
-                            impacto_cercano = Some((pieza, t));
+                        let mut es_habitacion = false;
+                        if let Some((panel, t)) = habitacion.intersectar(ray) {
+                            if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
+                                impacto_cercano = Some((panel, t));
+                                es_habitacion = true;
+                            }
                         }
-                    }
-                    let mut es_habitacion = false;
-                    if let Some((panel, t)) = habitacion.intersectar(&ray) {
-                        if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
-                            impacto_cercano = Some((panel, t));
-                            es_habitacion = true;
-                        }
-                    }
-                    if let Some((objeto, t)) = impacto_cercano {
-                        let hit = ray.point_at(t);
-                        let normal = objeto.normal(hit);
-                        let (u, v) = objeto.uv(hit);
-                        let albedo = objeto.textura().albedo(u, v);
-                        let shininess = objeto.textura().brillo();
-                        let color = sombrear_puntual(
-                            ray.direction,
-                            hit,
-                            normal,
-                            LUZ_TECHO,
-                            if es_habitacion {
-                                [1.0, 0.96, 0.90]
-                            } else {
-                                COLOR_LUZ
-                            },
-                            albedo,
-                            shininess,
-                        );
-                        let color = if es_habitacion {
-                            cuarto::relleno_ambiente(color, albedo)
-                        } else {
-                            color
-                        };
-                        *pixel =
-                            textura::aplicar_emision(color, albedo, objeto.textura().emision());
-                    }
+                        impacto_cercano.map(|(objeto, t)| (objeto, t, es_habitacion))
+                    });
                 }
             });
 
@@ -223,4 +198,3 @@ fn main() {
         dibujar_fps(&mut d, fps);
     }
 }
-

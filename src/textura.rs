@@ -10,6 +10,12 @@ pub type Albedo = [f64; 3];
 /// Requiere Send + Sync por la misma razon que `Objeto`: el render en
 /// paralelo (rayon) comparte referencias a las texturas entre hilos.
 pub trait Textura: Send + Sync {
+    fn transparencia(&self) -> f64 {
+        0.0
+    }
+    fn filtro(&self) -> Albedo {
+        [1.0; 3]
+    }
     /// Brillo propio visible; no lanza rayos ni simula iluminacion indirecta.
     fn emision(&self) -> f64 {
         0.0
