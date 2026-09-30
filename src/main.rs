@@ -1,8 +1,10 @@
 mod billar;
 mod framebuffer;
+mod cuarto; 
 mod mesa;
 mod rayIntersect;
 mod sphere;
+mod taco;
 mod textura;
 
 use billar::crear_bolas;
@@ -52,6 +54,7 @@ fn main() {
 
     let bolas = crear_bolas();
     let mesa = crear_mesa();
+    let habitacion = cuarto::crear_habitacion();
 
     // Una sola textura de GPU reutilizada cada frame: subir 480,000 pixeles
     // de una vez es mucho mas rapido que llamar draw_pixel por cada uno.
@@ -62,7 +65,7 @@ fn main() {
 
     // Camara libre: se mueve en sus propios ejes (adelante/atras, strafe, arriba/abajo)
     // y gira con yaw (su propio eje Y) y pitch (arriba/abajo).
-    let mut camera_pos = [0.0, 1.65, 0.70];
+    let mut camera_pos = [0.0, 1.65 + mesa::ELEVACION_MESA, 0.70];
     let mut yaw: f64 = 0.0;
     let mut pitch: f64 = -0.22;
     let velocidad_movimiento = 0.06;
@@ -148,6 +151,13 @@ fn main() {
                         }
                     }
 
+                    let mut es_habitacion = false;
+                    if let Some((panel, t)) = habitacion.intersectar(&ray) {
+                        if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
+                            impacto_cercano = Some((panel, t));
+                            es_habitacion = true;
+                        }
+                    }
                     if let Some((objeto, t)) = impacto_cercano {
                         let hit = ray.point_at(t);
                         let normal = objeto.normal(hit);
@@ -159,11 +169,19 @@ fn main() {
                             hit,
                             normal,
                             LUZ_TECHO,
-                            COLOR_LUZ,
+                            if es_habitacion {
+                                [1.0, 0.96, 0.90]
+                            } else {
+                                COLOR_LUZ
+                            },
                             albedo,
                             shininess,
                         );
-                        *pixel = color;
+                        *pixel = if es_habitacion {
+                            cuarto::relleno_ambiente(color, albedo)
+                        } else {
+                            color
+                        };
                     }
                 }
             });
@@ -192,3 +210,4 @@ fn main() {
         dibujar_fps(&mut d, fps);
     }
 }
+

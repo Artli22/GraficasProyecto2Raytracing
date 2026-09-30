@@ -1,10 +1,12 @@
 use crate::rayIntersect::{Objeto, Ray};
-use crate::textura::{ColorSolido, Fieltro, TexturaMadera, Textura};
+use crate::textura::{ColorSolido, Fieltro, Textura, TexturaMadera};
 
 const EPSILON: f64 = 0.0001;
 const RADIO_TRONERA: f64 = 0.225;
-// La tela termina en y = 0.55; este pequeno desplazamiento evita parpadeos.
-const ALTURA_TRONERA: f64 = 0.552;
+// Altura compartida con bolas, taco y camara; troneras apenas sobre el pano.
+pub const ELEVACION_MESA: f64 = 0.90;
+pub const ALTURA_PANO: f64 = 0.55 + ELEVACION_MESA;
+const ALTURA_TRONERA: f64 = ALTURA_PANO + 0.002;
 
 /// Circulo horizontal sin volumen, utilizado para representar una tronera
 /// completamente plana sobre la superficie de la mesa.
@@ -93,9 +95,7 @@ impl CajaRectangular {
 
         for eje in 0..3 {
             if ray.direction[eje].abs() < EPSILON {
-                if ray.origin[eje] < self.minimo[eje]
-                    || ray.origin[eje] > self.maximo[eje]
-                {
+                if ray.origin[eje] < self.minimo[eje] || ray.origin[eje] > self.maximo[eje] {
                     return None;
                 }
                 continue;
@@ -213,21 +213,41 @@ fn agregar_caja(
 }
 
 /// Construye una mesa de 3 x 6 unidades centrada en z = -4.2.
-/// La superficie queda en y = 0.55, justo debajo de las bolas.
+/// El pano queda a ALTURA_PANO; cuatro patas apoyan el cuerpo sobre el piso.
 pub fn crear_mesa() -> Mesa {
     let mut piezas: Vec<Box<dyn Objeto>> = Vec::new();
 
     // Cuerpo, faldones y pano.
-    agregar_caja(&mut piezas, [0.0, 0.28, -4.20], [3.65, 0.46, 6.65], madera());
-    agregar_caja(&mut piezas, [0.0, 0.515, -4.20], [3.00, 0.07, 6.00], pano_verde());
+    agregar_caja(
+        &mut piezas,
+        [0.0, 0.28 + ELEVACION_MESA, -4.20],
+        [3.65, 0.46, 6.65],
+        madera(),
+    );
+    agregar_caja(
+        &mut piezas,
+        [0.0, ALTURA_PANO - 0.035, -4.20],
+        [3.00, 0.07, 6.00],
+        pano_verde(),
+    );
 
     // Cuatro rieles continuos de madera. Los laterales pasan por detras de las
     // troneras centrales para que nunca se vea un hueco abierto en la pared.
     for &x in &[-1.68, 1.68] {
-        agregar_caja(&mut piezas, [x, 0.68, -4.20], [0.36, 0.28, 6.52], madera());
+        agregar_caja(
+            &mut piezas,
+            [x, 0.68 + ELEVACION_MESA, -4.20],
+            [0.36, 0.28, 6.52],
+            madera(),
+        );
     }
     for &z in &[-7.28, -1.12] {
-        agregar_caja(&mut piezas, [0.0, 0.68, z], [3.05, 0.28, 0.36], madera());
+        agregar_caja(
+            &mut piezas,
+            [0.0, 0.68 + ELEVACION_MESA, z],
+            [3.05, 0.28, 0.36],
+            madera(),
+        );
     }
 
     // Seis troneras negras planas, colocadas apenas por encima de la tela.
@@ -247,12 +267,56 @@ pub fn crear_mesa() -> Mesa {
         )));
     }
 
+    // Cuatro patas macizas: desde el piso y=0 hasta dentro del cuerpo.
+    // Se solapan 0.02 unidades con el faldon para evitar separaciones visibles.
+    let altura_pata = ELEVACION_MESA + 0.07;
+    for x in [-1.35, 1.35] {
+        for z in [-6.80, -1.60] {
+            agregar_caja(
+                &mut piezas,
+                [x, altura_pata * 0.5, z],
+                [0.40, altura_pata, 0.40],
+                madera(),
+            );
+        }
+    }
+
+    // La envolvente incluye las patas y el taco elevado.
+    piezas.push(Box::new(crate::taco::crear_taco()));
+
     Mesa {
         limite: CajaRectangular::new(
-            [0.0, 0.44, -4.20],
-            [3.90, 0.85, 6.90],
+            [0.0, (0.84 + ELEVACION_MESA) * 0.5, -4.20],
+            [3.90, 0.84 + ELEVACION_MESA, 6.90],
             negro(),
         ),
         piezas,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn patas_visibles_y_espacio_libre_bajo_mesa() {
+        let mesa = crear_mesa();
+        for x in [-1.35_f64, 1.35] {
+            for z in [-6.80, -1.60] {
+                let signo = x.signum();
+                let ray = Ray::new([signo * 2.5, 0.4, z], [-signo, 0.0, 0.0]);
+                let (_, t) = mesa
+                    .intersectar(&ray)
+                    .expect("la envolvente debe incluir cada pata");
+                assert!((t - 0.95).abs() < 1e-8);
+            }
+        }
+        assert!(
+            mesa.intersectar(&Ray::new([0.0, 0.4, 0.0], [0.0, 0.0, -1.0]))
+                .is_none()
+        );
+        for bola in crate::billar::crear_bolas() {
+            assert!((bola.center[1] - bola.radius - ALTURA_PANO).abs() < 1e-8);
+        }
+    }
+}
+

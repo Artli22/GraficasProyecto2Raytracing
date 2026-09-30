@@ -2,7 +2,7 @@ use crate::sphere::Sphere;
 use crate::textura::BolaBillar;
 
 const RADIO_BOLA: f64 = 0.12;
-const ALTURA_MESA: f64 = 0.55;
+const ALTURA_MESA: f64 = crate::mesa::ALTURA_PANO;
 
 fn datos_bola(numero: u8) -> ([f64; 3], bool) {
     let color = match numero {
