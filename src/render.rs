@@ -1,5 +1,5 @@
 use crate::rayIntersect::{Objeto, Ray, dot};
-use crate::textura::{aplicar_emision, sombrear_puntual};
+use crate::textura::{aplicar_emision, sombrear_puntual_visible};
 use raylib::prelude::Color;
 
 /// Limite de objetos transparentes; cada vaso resuelve su refraccion internamente.
@@ -7,6 +7,22 @@ pub const MAX_CAPAS: usize = 6;
 pub fn trazar<'a, F>(primario: &Ray, escena: &F) -> Color
 where
     F: Fn(&Ray) -> Option<(&'a dyn Objeto, f64, bool)>,
+{
+    trazar_con_sombras(primario, escena, &|_, _| false)
+}
+
+pub fn trazar_con_sombras<'a, F, S>(primario: &Ray, escena: &F, ocluye: &S) -> Color
+where
+    F: Fn(&Ray) -> Option<(&'a dyn Objeto, f64, bool)>,
+    S: Fn(&Ray, f64) -> bool,
+{
+    trazar_precalculado(primario, escena, &|p, n, _| visibilidad(p, n, ocluye))
+}
+
+pub fn trazar_precalculado<'a, F, S>(primario: &Ray, escena: &F, sombra: &S) -> Color
+where
+    F: Fn(&Ray) -> Option<(&'a dyn Objeto, f64, bool)>,
+    S: Fn([f64; 3], [f64; 3], bool) -> f64,
 {
     let mut ray = Ray {
         origin: primario.origin,
@@ -38,7 +54,7 @@ where
         let (u, v) = objeto.uv(p);
 
         let albedo = mat.albedo(u, v);
-        let color = sombrear_puntual(
+        let color = sombrear_puntual_visible(
             ray.direction,
             p,
             n,
@@ -50,6 +66,7 @@ where
             },
             albedo,
             mat.brillo(),
+            sombra(p, n, es_cuarto),
         );
         let color = if es_cuarto {
             let canal =
@@ -60,7 +77,7 @@ where
         };
         let color = aplicar_emision(color, albedo, mat.emision());
 
-        // Los objetos opacos siguen costando una sola consulta y conservan su color.
+        // Los objetos opacos terminan tras resolver su iluminacion.
         if capa == 0 && transparencia == 0.0 {
             return color;
         }
@@ -95,8 +112,61 @@ where
     )
 }
 
+/// Un rayo acotado a la distancia a la luz, desplazado fuera de la superficie.
+fn visibilidad<S: Fn(&Ray, f64) -> bool>(p: [f64; 3], n: [f64; 3], ocluye: &S) -> f64 {
+    use crate::rayIntersect::{escala, sub, suma};
+    let luz = crate::lampara::LUZ_POSICION;
+    if dot(n, sub(luz, p)) <= 0.0 {
+        return 0.0;
+    }
+    let origen = suma(p, escala(n, 0.0002));
+    let delta = sub(luz, origen);
+    let distancia = dot(delta, delta).sqrt();
+    if distancia <= 0.0002 {
+        return 1.0;
+    }
+    let rayo = Ray {
+        origin: origen,
+        direction: escala(delta, 1.0 / distancia),
+    };
+    if ocluye(&rayo, distancia - 0.0002) {
+        0.0
+    } else {
+        1.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sombra_conserva_ambiente_y_segmento_acotado() {
+        let p = [0.0, 1.0, -4.2];
+        let n = [0.0, 1.0, 0.0];
+        assert_eq!(
+            super::visibilidad(p, n, &|r, max| {
+                assert!(r.origin[1] > p[1]);
+                assert!(max > 2.5 && max < 2.55);
+                true
+            }),
+            0.0
+        );
+        assert_eq!(
+            super::visibilidad(p, [0.0, -1.0, 0.0], &|_, _| panic!("cara opuesta")),
+            0.0
+        );
+        let c = crate::textura::sombrear_puntual_visible(
+            [0.0, -1.0, 0.0],
+            p,
+            n,
+            crate::lampara::LUZ_POSICION,
+            [1.0; 3],
+            [1.0; 3],
+            32.0,
+            0.0,
+        );
+        assert_eq!([c.r, c.g, c.b], [19; 3]);
+    }
+
     use super::*;
     use crate::textura::{Albedo, Textura};
     struct Transparente;

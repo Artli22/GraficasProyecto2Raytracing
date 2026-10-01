@@ -4,6 +4,7 @@ use crate::textura::BolaBillar;
 const RADIO_BOLA: f64 = 0.12;
 const ALTURA_MESA: f64 = crate::mesa::ALTURA_PANO;
 
+// Asignacion de color y tipo (completa o rayada)
 fn datos_bola(numero: u8) -> ([f64; 3], bool) {
     let color = match numero {
         1 | 9 => [1.0, 0.82, 0.04],
@@ -24,15 +25,14 @@ pub fn crear_bolas() -> Vec<Sphere> {
     let separacion = RADIO_BOLA * 2.08;
     let mut bolas = Vec::with_capacity(16);
 
-    // Numero 0: bola blanca.
+    // Creacion de la bola blanca
     bolas.push(Sphere::new(
         [0.0, altura, -2.65],
         RADIO_BOLA,
         Box::new(BolaBillar::new(0, [0.96, 0.95, 0.88], false)),
     ));
 
-    // La bola 8 queda al centro del triangulo y las esquinas posteriores
-    // contienen una solida y una rayada.
+    // Distribucion triangular de las bolas
     let orden = [1, 10, 2, 3, 8, 11, 12, 4, 13, 5, 7, 14, 6, 15, 9];
     let inicio_z = -4.70;
     let mut indice = 0;

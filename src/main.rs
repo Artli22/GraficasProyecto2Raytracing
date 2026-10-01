@@ -7,6 +7,7 @@ mod paralelo;
 mod patas;
 mod rayIntersect;
 mod render;
+mod sombras;
 mod sphere;
 mod taco;
 mod textura;
@@ -23,7 +24,7 @@ const WIDTH: i32 = 800;
 const HEIGHT: i32 = 600;
 const PITCH_MAX: f64 = 1.5;
 
-/// Direccion hacia la que mira la camara segun su yaw (giro en su eje Y) y pitch (arriba/abajo).
+/// Direccion hacia la que mira la camara segun su yaw y pitch 
 fn direccion_camara(yaw: f64, pitch: f64) -> [f64; 3] {
     [
         yaw.sin() * pitch.cos(),
@@ -32,14 +33,14 @@ fn direccion_camara(yaw: f64, pitch: f64) -> [f64; 3] {
     ]
 }
 
-/// Alterna entre modo ventana y pantalla completa al presionar F11.
+/// Alterna entre modo ventana y pantalla completa 
 fn controlar_pantalla_completa(rl: &mut RaylibHandle) {
     if rl.is_key_pressed(KeyboardKey::KEY_F11) {
         rl.toggle_fullscreen();
     }
 }
 
-/// Dibuja un contador de FPS legible en la esquina superior izquierda.
+/// Dibuja un contador de FPS legible 
 fn dibujar_fps<D: RaylibDraw>(d: &mut D, fps: u32) {
     let texto = format!("FPS: {}", fps);
     d.draw_rectangle(8, 8, 112, 34, Color::new(0, 0, 0, 180));
@@ -59,15 +60,13 @@ fn main() {
     let lampara = lampara::crear_lampara();
     let habitacion = cuarto::crear_habitacion();
 
-    // Una sola textura de GPU reutilizada cada frame: subir 480,000 pixeles
-    // de una vez es mucho mas rapido que llamar draw_pixel por cada uno.
+    // Una sola textura de GPU reutilizada cada frame
     let imagen_inicial = Image::gen_image_color(WIDTH, HEIGHT, Color::BLACK);
     let mut pantalla = rl
         .load_texture_from_image(&thread, &imagen_inicial)
         .expect("no se pudo crear la textura de pantalla");
 
-    // Camara libre: se mueve en sus propios ejes (adelante/atras, strafe, arriba/abajo)
-    // y gira con yaw (su propio eje Y) y pitch (arriba/abajo).
+    // Camara libre
     let mut camera_pos = [0.0, 1.65 + mesa::ELEVACION_MESA, 0.70];
     let mut yaw: f64 = 0.0;
     let mut pitch: f64 = -0.22;
@@ -75,6 +74,24 @@ fn main() {
     let velocidad_giro = 0.03;
     let aspect = WIDTH as f64 / HEIGHT as f64;
     let mut fb = Framebuffer::new(WIDTH, HEIGHT, Color::BLACK);
+
+    // Sombras no dinamicas 
+    let sombras =
+        sombras::MapaSombras::construir(lampara::LUZ_POSICION, sombras::RESOLUCION, &|r| {
+            let mut cercano = mesa
+                .intersectar_opacos(r)
+                .map(|(_, t)| t)
+                .unwrap_or(f64::INFINITY);
+            for b in &bolas {
+                if let Some(t) = b.intersect(r) {
+                    cercano = cercano.min(t);
+                }
+            }
+            if let Some((_, t)) = lampara.intersectar(r) {
+                cercano = cercano.min(t);
+            }
+            cercano.is_finite().then_some(cercano)
+        });
 
     // La escena se comparte por referencias inmutables mientras exista el pool.
     let calcular_pixel = |x: usize, y: usize, camara: &Camara| -> Color {
@@ -87,45 +104,49 @@ fn main() {
         ];
         let ray = Ray::new(camara.posicion, dir);
 
-        render::trazar(&ray, &|ray: &Ray| {
-            let mut impacto_cercano: Option<(&dyn Objeto, f64)> = None;
+        render::trazar_precalculado(
+            &ray,
+            &|ray: &Ray| {
+                let mut impacto_cercano: Option<(&dyn Objeto, f64)> = None;
 
-            for bola in &bolas {
-                if let Some(t) = bola.intersect(ray) {
+                for bola in &bolas {
+                    if let Some(t) = bola.intersect(ray) {
+                        let reemplazar = impacto_cercano
+                            .map(|(_, distancia)| t < distancia)
+                            .unwrap_or(true);
+
+                        if reemplazar {
+                            impacto_cercano = Some((bola as &dyn Objeto, t));
+                        }
+                    }
+                }
+
+                if let Some((pieza, t)) = mesa.intersectar(ray) {
                     let reemplazar = impacto_cercano
                         .map(|(_, distancia)| t < distancia)
                         .unwrap_or(true);
 
                     if reemplazar {
-                        impacto_cercano = Some((bola as &dyn Objeto, t));
+                        impacto_cercano = Some((pieza, t));
                     }
                 }
-            }
 
-            if let Some((pieza, t)) = mesa.intersectar(ray) {
-                let reemplazar = impacto_cercano
-                    .map(|(_, distancia)| t < distancia)
-                    .unwrap_or(true);
-
-                if reemplazar {
-                    impacto_cercano = Some((pieza, t));
+                if let Some((pieza, t)) = lampara.intersectar(ray) {
+                    if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
+                        impacto_cercano = Some((pieza, t));
+                    }
                 }
-            }
-
-            if let Some((pieza, t)) = lampara.intersectar(ray) {
-                if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
-                    impacto_cercano = Some((pieza, t));
+                let mut es_habitacion = false;
+                if let Some((panel, t)) = habitacion.intersectar(ray) {
+                    if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
+                        impacto_cercano = Some((panel, t));
+                        es_habitacion = true;
+                    }
                 }
-            }
-            let mut es_habitacion = false;
-            if let Some((panel, t)) = habitacion.intersectar(ray) {
-                if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
-                    impacto_cercano = Some((panel, t));
-                    es_habitacion = true;
-                }
-            }
-            impacto_cercano.map(|(objeto, t)| (objeto, t, es_habitacion))
-        })
+                impacto_cercano.map(|(objeto, t)| (objeto, t, es_habitacion))
+            },
+            &|p, n, cuarto| sombras.visibilidad(p, n, cuarto),
+        )
     };
     let trabajadores = std::env::var("RENDER_THREADS")
         .ok()

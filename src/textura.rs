@@ -1,14 +1,10 @@
 use raylib::prelude::*;
 use std::f64::consts::PI;
 
-/// Color base (albedo) en espacio [0.0, 1.0] por canal RGB.
-/// Queda separado del framebuffer para que este mismo archivo pueda
-/// incorporar mas adelante reflexion dinamica, refraccion, mapas de
-/// normales, etc. sin tocar la logica de dibujado.
 pub type Albedo = [f64; 3];
 
 /// Requiere Send + Sync por la misma razon que `Objeto`: el render en
-/// paralelo (rayon) comparte referencias a las texturas entre hilos.
+/// paralelo (std::thread) comparte referencias a las texturas entre hilos.
 pub trait Textura: Send + Sync {
     fn transparencia(&self) -> f64 {
         0.0
@@ -45,7 +41,7 @@ impl Textura for ColorSolido {
     }
 }
 
-/// Ruido "hash" pseudo-aleatorio en una retícula entera, base para
+/// Ruido "hash" pseudo-aleatorio en una retÃƒÂ­cula entera, base para
 /// construir el value noise. Determinista y sin dependencias externas.
 /// Solo se invoca al construir la tabla precalculada (una vez), nunca
 /// por pixel, ya que usa sin(), una funcion trascendental costosa.
@@ -126,7 +122,7 @@ fn fbm(tabla: &[f64], x: f64, y: f64, octavas: u32) -> f64 {
     total / amplitud_maxima
 }
 
-/// Simula el tejido de un paño de billar: grano fino e irregular generado
+/// Simula el tejido de un paÃƒÂ±o de billar: grano fino e irregular generado
 /// con ruido fractal, sin ningun patron geometrico repetitivo. Sin
 /// highlight especular, ya que la tela es mate. El ruido se precalcula
 /// una sola vez en `new()`; renderizar solo hace lookups en la tabla,
@@ -378,12 +374,12 @@ pub fn sombrear(
     albedo: Albedo,
     shininess: f64,
 ) -> Color {
-    // Difusión clásica
+    // DifusiÃƒÂ³n clÃƒÂ¡sica
     let diffuse =
         (normal[0] * light_dir[0] + normal[1] * light_dir[1] + normal[2] * light_dir[2]).max(0.0);
 
     // Especularidad Blinn-Phong: half-vector entre luz y vista
-    let neg_ray = [-ray_dir[0], -ray_dir[1], -ray_dir[2]]; // hacia la cámara
+    let neg_ray = [-ray_dir[0], -ray_dir[1], -ray_dir[2]]; // hacia la cÃƒÂ¡mara
     let half = [
         light_dir[0] + neg_ray[0],
         light_dir[1] + neg_ray[1],
@@ -400,7 +396,7 @@ pub fn sombrear(
         0.0
     };
 
-    // Combinar: componente difusa teñida + highlight blanco
+    // Combinar: componente difusa teÃƒÂ±ida + highlight blanco
     let r = (albedo[0] * diffuse + specular * 0.5).clamp(0.0, 1.0) * 255.0;
     let g = (albedo[1] * diffuse + specular * 0.5).clamp(0.0, 1.0) * 255.0;
     let b = (albedo[2] * diffuse + specular * 0.5).clamp(0.0, 1.0) * 255.0;
@@ -417,6 +413,29 @@ pub fn sombrear_puntual(
     color_luz: Albedo,
     albedo: Albedo,
     shininess: f64,
+) -> Color {
+    sombrear_puntual_visible(
+        ray_dir,
+        punto,
+        normal,
+        posicion_luz,
+        color_luz,
+        albedo,
+        shininess,
+        1.0,
+    )
+}
+
+/// La visibilidad afecta solo a la luz directa; conserva el ambiente.
+pub fn sombrear_puntual_visible(
+    ray_dir: [f64; 3],
+    punto: [f64; 3],
+    normal: [f64; 3],
+    posicion_luz: [f64; 3],
+    color_luz: Albedo,
+    albedo: Albedo,
+    shininess: f64,
+    visibilidad: f64,
 ) -> Color {
     let hacia_luz = [
         posicion_luz[0] - punto[0],
@@ -452,7 +471,7 @@ pub fn sombrear_puntual(
         0.0
     };
 
-    let atenuacion = 1.0 / (1.0 + 0.025 * distancia_cuadrada);
+    let atenuacion = visibilidad / (1.0 + 0.025 * distancia_cuadrada);
     let ambiente = 0.075;
     let canal = |i: usize| {
         ((albedo[i] * ambiente

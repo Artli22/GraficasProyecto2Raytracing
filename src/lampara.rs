@@ -3,9 +3,8 @@ use crate::mesa::CajaRectangular;
 use crate::rayIntersect::{Objeto, Ray, cross, dot, escala, normalize, sub, suma};
 use crate::textura::{Albedo, ColorSolido, Textura};
 
+// Dimensiones de la lampara 
 pub const LUZ_POSICION: [f64; 3] = [0.0, 3.55, -4.20];
-// Proporcion del ancho y largo del pano (3 x 6 unidades).
-// Usa 0.60 para una lampara mas pequena; 0.75 equivale a tres cuartas partes.
 pub const PROPORCION_MESA: f64 = 0.75;
 const ESCALA_X: f64 = 3.0 * PROPORCION_MESA / 2.17;
 const ESCALA_Z: f64 = 6.0 * PROPORCION_MESA / 4.88;
@@ -15,7 +14,7 @@ fn escalar_posicion(p: [f64; 3]) -> [f64; 3] {
 const BASE: f64 = 3.65;
 const CIMA: f64 = 4.35;
 
-/// Trapecio plano con bases paralelas. UV continuo para pintar las divisiones.
+/// Renderizacion de trapecio plano con bases paralelas. 
 struct Pantalla {
     a: [f64; 3],
     b: [f64; 3],
@@ -62,6 +61,7 @@ impl Pantalla {
     }
 }
 
+// 
 impl Objeto for Pantalla {
     fn intersect(&self, ray: &Ray) -> Option<f64> {
         let denom = dot(ray.direction, self.normal);
@@ -134,6 +134,14 @@ pub struct Lampara {
     piezas: Vec<Box<dyn Objeto>>,
 }
 impl Lampara {
+    pub fn ocluye(&self, ray: &Ray, max: f64) -> bool {
+        if self.limite.intersect(ray).is_none() {
+            return false;
+        }
+        self.piezas
+            .iter()
+            .any(|p| p.intersect(ray).is_some_and(|t| t > 0.0 && t < max))
+    }
     pub fn intersectar(&self, ray: &Ray) -> Option<(&dyn Objeto, f64)> {
         self.limite.intersect(ray)?;
         let mut cercano: Option<(&dyn Objeto, f64)> = None;
@@ -210,7 +218,7 @@ pub fn crear_lampara() -> Lampara {
         [1.28, 0.05, 3.68],
         metal(),
     )));
-    // Marco inferior con grosor real; el resto de la traceria es procedural.
+    // Marco inferior con grosor real
     for x in [-1.05, 1.05] {
         piezas.push(Box::new(caja(
             [x, BASE, -4.20],

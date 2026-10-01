@@ -363,6 +363,22 @@ impl Nodo {
         };
         Self { limites, contenido }
     }
+    fn ocluye(&self, ray: &Ray, inv: &[f64; 3], piezas: &[Pieza], max: f64) -> bool {
+        if self.limites.entrada(ray, inv, max).is_none() {
+            return false;
+        }
+        match &self.contenido {
+            Contenido::Hoja(indices) => indices.iter().any(|&i| {
+                let obj = piezas[i].objeto.as_ref();
+                // Aproximacion economica: los vasos dejan pasar la luz de sombra.
+                obj.textura().transparencia() == 0.0
+                    && obj.intersect(ray).is_some_and(|t| t > 0.0 && t < max)
+            }),
+            Contenido::Rama(a, b) => {
+                a.ocluye(ray, inv, piezas, max) || b.ocluye(ray, inv, piezas, max)
+            }
+        }
+    }
     fn recorrer(
         &self,
         ray: &Ray,
@@ -403,6 +419,49 @@ impl Nodo {
             }
         }
     }
+    fn recorrer_opacos(
+        &self,
+        ray: &Ray,
+        inv: &[f64; 3],
+        piezas: &[Pieza],
+        hit: &mut Option<(usize, f64)>,
+    ) {
+        match &self.contenido {
+            Contenido::Hoja(indices) => {
+                for i in indices {
+                    if piezas[*i].objeto.textura().transparencia() > 0.0 {
+                        continue;
+                    }
+                    if let Some(t) = piezas[*i].objeto.intersect(ray) {
+                        if hit
+                            .map(|(j, d)| t < d || (t == d && *i < j))
+                            .unwrap_or(true)
+                        {
+                            *hit = Some((*i, t));
+                        }
+                    }
+                }
+            }
+            Contenido::Rama(a, b) => {
+                let max = hit.map(|(_, t)| t).unwrap_or(f64::INFINITY);
+                let ta = a.limites.entrada(ray, inv, max);
+                let tb = b.limites.entrada(ray, inv, max);
+                match (ta, tb) {
+                    (Some(ta), Some(tb)) => {
+                        let (primero, segundo, tsegundo) =
+                            if ta <= tb { (a, b, tb) } else { (b, a, ta) };
+                        primero.recorrer_opacos(ray, inv, piezas, hit);
+                        if tsegundo <= hit.map(|(_, t)| t).unwrap_or(f64::INFINITY) {
+                            segundo.recorrer_opacos(ray, inv, piezas, hit);
+                        }
+                    }
+                    (Some(_), None) => a.recorrer_opacos(ray, inv, piezas, hit),
+                    (None, Some(_)) => b.recorrer_opacos(ray, inv, piezas, hit),
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 pub struct Mesa {
     raiz: Nodo,
@@ -410,11 +469,23 @@ pub struct Mesa {
 }
 
 impl Mesa {
+    pub fn ocluye(&self, ray: &Ray, max: f64) -> bool {
+        self.raiz
+            .ocluye(ray, &ray.direction.map(|d| 1.0 / d), &self.piezas, max)
+    }
     pub fn intersectar<'a>(&'a self, ray: &Ray) -> Option<(&'a dyn Objeto, f64)> {
         let inv = ray.direction.map(|d| 1.0 / d);
         self.raiz.limites.entrada(ray, &inv, f64::INFINITY)?;
         let mut cercano = None;
         self.raiz.recorrer(ray, &inv, &self.piezas, &mut cercano);
+        cercano.map(|(i, t)| (self.piezas[i].objeto.as_ref(), t))
+    }
+    pub fn intersectar_opacos<'a>(&'a self, ray: &Ray) -> Option<(&'a dyn Objeto, f64)> {
+        let inv = ray.direction.map(|d| 1.0 / d);
+        self.raiz.limites.entrada(ray, &inv, f64::INFINITY)?;
+        let mut cercano = None;
+        self.raiz
+            .recorrer_opacos(ray, &inv, &self.piezas, &mut cercano);
         cercano.map(|(i, t)| (self.piezas[i].objeto.as_ref(), t))
     }
 }
@@ -554,6 +625,51 @@ pub fn crear_mesa() -> Mesa {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn profundidad_opaca_ignora_vasos_y_coincide_con_lineal() {
+        let mesa = super::crear_mesa();
+        let mut seed = 4321u64;
+        let mut rnd = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed >> 11) as f64 / ((1u64 << 53) as f64)
+        };
+        for _ in 0..10000 {
+            let ray = super::Ray::new(
+                crate::lampara::LUZ_POSICION,
+                [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5],
+            );
+            let lineal = mesa
+                .piezas
+                .iter()
+                .filter(|p| p.objeto.textura().transparencia() == 0.0)
+                .filter_map(|p| p.objeto.intersect(&ray))
+                .min_by(f64::total_cmp);
+            assert_eq!(mesa.intersectar_opacos(&ray).map(|(_, t)| t), lineal);
+        }
+    }
+    #[test]
+    fn oclusion_bvh_coincide_con_lineal_y_respeta_distancia() {
+        let mesa = super::crear_mesa();
+        let mut seed = 1234567u64;
+        let mut rnd = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed >> 11) as f64 / ((1u64 << 53) as f64)
+        };
+        for _ in 0..10000 {
+            let ray = super::Ray::new(
+                [rnd() * 10.0 - 5.0, rnd() * 7.0, rnd() * 16.0 - 12.0],
+                [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5],
+            );
+            let max = rnd() * 12.0;
+            let lineal = mesa.piezas.iter().any(|p| {
+                p.objeto.textura().transparencia() == 0.0
+                    && p.objeto.intersect(&ray).is_some_and(|t| t > 0.0 && t < max)
+            });
+            assert_eq!(mesa.ocluye(&ray, max), lineal);
+            assert!(!mesa.ocluye(&ray, 0.0));
+        }
+    }
+
     use super::*;
     #[test]
     fn vasos_sobre_madera_y_taco_fuera_de_lampara() {

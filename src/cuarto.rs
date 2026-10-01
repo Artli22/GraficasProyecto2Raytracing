@@ -3,17 +3,16 @@ use crate::textura::{Albedo, ColorSolido, Textura, TexturaMadera};
 
 const EPS: f64 = 1e-7;
 
-// Edita estos limites para cambiar el tamano: geometria y camara los comparten.
+// Edita estos limites para cambiar el tamano de la habitacion.
 pub const X_MIN: f64 = -8.0;
 pub const X_MAX: f64 = 8.0;
-pub const Y_MIN: f64 = 0.0; // Piso.
-pub const Y_MAX: f64 = 7.0; // Techo.
+pub const Y_MIN: f64 = 0.0; 
+pub const Y_MAX: f64 = 7.0; 
 pub const Z_MIN: f64 = -14.0;
 pub const Z_MAX: f64 = 6.0;
 pub const MARGEN_CAMARA: f64 = 0.20;
 
-/// Mantiene la camara dentro, dejando una separacion de cada superficie.
-/// Limitar cada eje permite deslizarse junto a paredes y detenerse en esquinas.
+// Definir los limites de la camara unicamente dentro de la habitacion 
 pub fn limitar_camara(posicion: &mut [f64; 3]) {
     let minimo = [X_MIN, Y_MIN, Z_MIN];
     let maximo = [X_MAX, Y_MAX, Z_MAX];
@@ -89,7 +88,6 @@ impl Objeto for Panel {
     }
 
     fn uv(&self, p: [f64; 3]) -> (f64, f64) {
-        // Coordenadas en unidades de mundo para mantener el tamano de las tablas.
         (
             p[self.ejes_uv[0]] - self.minimo[0],
             p[self.ejes_uv[1]] - self.minimo[1],
@@ -118,7 +116,6 @@ impl Textura for PisoTablas {
         }
         let pieza = ((v + desplazamiento) / largo).floor();
         let tono = 0.92 + (fila * 17.0 + pieza * 7.0).rem_euclid(9.0) * 0.02;
-        // Vetas largas orientadas con las tablas, usando la textura existente.
         let base = self.madera.albedo((v + desplazamiento) / largo, u / ancho);
         base.map(|c| (c * tono).clamp(0.0, 1.0))
     }
