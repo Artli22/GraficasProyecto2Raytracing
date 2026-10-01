@@ -2,8 +2,8 @@ use crate::rayIntersect::{Objeto, Ray, dot};
 use crate::textura::{aplicar_emision, sombrear_puntual};
 use raylib::prelude::Color;
 
-/// Limite duro: no refraccion, no reflexiones recursivas, solo transmision recta.
-pub const MAX_CAPAS: usize = 12;
+/// Limite de objetos transparentes; cada vaso resuelve su refraccion internamente.
+pub const MAX_CAPAS: usize = 6;
 pub fn trazar<'a, F>(primario: &Ray, escena: &F) -> Color
 where
     F: Fn(&Ray) -> Option<(&'a dyn Objeto, f64, bool)>,
@@ -18,10 +18,25 @@ where
         let Some((objeto, t, es_cuarto)) = escena(&ray) else {
             break;
         };
+        let mat = objeto.textura();
+        let transparencia = mat.transparencia().clamp(0.0, 1.0);
+        if transparencia > 0.0 {
+            if let Some(paso) = objeto.atravesar(&ray, t) {
+                for i in 0..3 {
+                    acumulado[i] += peso[i] * paso.aporte[i] * 255.0;
+                    peso[i] *= paso.filtro[i];
+                }
+                ray = paso.rayo;
+                if peso.iter().all(|&p| p < 0.01) {
+                    break;
+                }
+                continue;
+            }
+        }
         let p = ray.point_at(t);
         let n = objeto.normal(p);
         let (u, v) = objeto.uv(p);
-        let mat = objeto.textura();
+
         let albedo = mat.albedo(u, v);
         let color = sombrear_puntual(
             ray.direction,
@@ -44,7 +59,7 @@ where
             color
         };
         let color = aplicar_emision(color, albedo, mat.emision());
-        let transparencia = mat.transparencia().clamp(0.0, 1.0);
+
         // Los objetos opacos siguen costando una sola consulta y conservan su color.
         if capa == 0 && transparencia == 0.0 {
             return color;

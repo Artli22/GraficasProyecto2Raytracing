@@ -1,8 +1,9 @@
 mod billar;
-mod framebuffer;
 mod cuarto;
+mod framebuffer;
 mod lampara;
 mod mesa;
+mod paralelo;
 mod patas;
 mod rayIntersect;
 mod render;
@@ -14,9 +15,9 @@ mod vasos;
 use billar::crear_bolas;
 use framebuffer::Framebuffer;
 use mesa::crear_mesa;
+use paralelo::{Camara, RenderParalelo};
 use rayIntersect::{Objeto, Ray, cross, escala, normalize, suma};
 use raylib::prelude::*;
-use rayon::prelude::*;
 
 const WIDTH: i32 = 800;
 const HEIGHT: i32 = 600;
@@ -75,126 +76,150 @@ fn main() {
     let aspect = WIDTH as f64 / HEIGHT as f64;
     let mut fb = Framebuffer::new(WIDTH, HEIGHT, Color::BLACK);
 
-    while !rl.window_should_close() {
-        controlar_pantalla_completa(&mut rl);
+    // La escena se comparte por referencias inmutables mientras exista el pool.
+    let calcular_pixel = |x: usize, y: usize, camara: &Camara| -> Color {
+        let u = (x as f64 + 0.5) / WIDTH as f64 * 2.0 - 1.0;
+        let v = 1.0 - (y as f64 + 0.5) / HEIGHT as f64 * 2.0;
+        let dir = [
+            camara.forward[0] + camara.right[0] * u * aspect + camara.up[0] * v,
+            camara.forward[1] + camara.right[1] * u * aspect + camara.up[1] * v,
+            camara.forward[2] + camara.right[2] * u * aspect + camara.up[2] * v,
+        ];
+        let ray = Ray::new(camara.posicion, dir);
 
-        if rl.is_key_down(KeyboardKey::KEY_LEFT) {
-            yaw -= velocidad_giro;
-        }
-        if rl.is_key_down(KeyboardKey::KEY_RIGHT) {
-            yaw += velocidad_giro;
-        }
-        if rl.is_key_down(KeyboardKey::KEY_UP) {
-            pitch = (pitch + velocidad_giro).min(PITCH_MAX);
-        }
-        if rl.is_key_down(KeyboardKey::KEY_DOWN) {
-            pitch = (pitch - velocidad_giro).max(-PITCH_MAX);
-        }
+        render::trazar(&ray, &|ray: &Ray| {
+            let mut impacto_cercano: Option<(&dyn Objeto, f64)> = None;
 
-        let forward = normalize(direccion_camara(yaw, pitch));
-        let right = normalize(cross(forward, [0.0, 1.0, 0.0]));
-        let up = cross(right, forward);
+            for bola in &bolas {
+                if let Some(t) = bola.intersect(ray) {
+                    let reemplazar = impacto_cercano
+                        .map(|(_, distancia)| t < distancia)
+                        .unwrap_or(true);
 
-        if rl.is_key_down(KeyboardKey::KEY_W) {
-            camera_pos = suma(camera_pos, escala(forward, velocidad_movimiento));
-        }
-        if rl.is_key_down(KeyboardKey::KEY_S) {
-            camera_pos = suma(camera_pos, escala(forward, -velocidad_movimiento));
-        }
-        if rl.is_key_down(KeyboardKey::KEY_A) {
-            camera_pos = suma(camera_pos, escala(right, -velocidad_movimiento));
-        }
-        if rl.is_key_down(KeyboardKey::KEY_D) {
-            camera_pos = suma(camera_pos, escala(right, velocidad_movimiento));
-        }
-        if rl.is_key_down(KeyboardKey::KEY_SPACE) {
-            camera_pos[1] += velocidad_movimiento;
-        }
-        if rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT) {
-            camera_pos[1] -= velocidad_movimiento;
-        }
-
-        // Aplicar despues de TODOS los controles y antes de trazar los rayos.
-        cuarto::limitar_camara(&mut camera_pos);
-
-        fb.pixels_mut()
-            .par_chunks_mut(WIDTH as usize)
-            .enumerate()
-            .for_each(|(y, fila)| {
-                for (x, pixel) in fila.iter_mut().enumerate() {
-                    *pixel = Color::BLACK;
-                    let u = (x as f64 + 0.5) / WIDTH as f64 * 2.0 - 1.0;
-                    let v = 1.0 - (y as f64 + 0.5) / HEIGHT as f64 * 2.0;
-                    let dir = [
-                        forward[0] + right[0] * u * aspect + up[0] * v,
-                        forward[1] + right[1] * u * aspect + up[1] * v,
-                        forward[2] + right[2] * u * aspect + up[2] * v,
-                    ];
-                    let ray = Ray::new(camera_pos, dir);
-
-                    *pixel = render::trazar(&ray, &|ray: &Ray| {
-                        let mut impacto_cercano: Option<(&dyn Objeto, f64)> = None;
-
-                        for bola in &bolas {
-                            if let Some(t) = bola.intersect(ray) {
-                                let reemplazar = impacto_cercano
-                                    .map(|(_, distancia)| t < distancia)
-                                    .unwrap_or(true);
-
-                                if reemplazar {
-                                    impacto_cercano = Some((bola as &dyn Objeto, t));
-                                }
-                            }
-                        }
-
-                        if let Some((pieza, t)) = mesa.intersectar(ray) {
-                            let reemplazar = impacto_cercano
-                                .map(|(_, distancia)| t < distancia)
-                                .unwrap_or(true);
-
-                            if reemplazar {
-                                impacto_cercano = Some((pieza, t));
-                            }
-                        }
-
-                        if let Some((pieza, t)) = lampara.intersectar(ray) {
-                            if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
-                                impacto_cercano = Some((pieza, t));
-                            }
-                        }
-                        let mut es_habitacion = false;
-                        if let Some((panel, t)) = habitacion.intersectar(ray) {
-                            if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
-                                impacto_cercano = Some((panel, t));
-                                es_habitacion = true;
-                            }
-                        }
-                        impacto_cercano.map(|(objeto, t)| (objeto, t, es_habitacion))
-                    });
+                    if reemplazar {
+                        impacto_cercano = Some((bola as &dyn Objeto, t));
+                    }
                 }
-            });
+            }
 
-        let fps = rl.get_fps();
-        let ancho_pantalla = rl.get_screen_width();
-        let alto_pantalla = rl.get_screen_height();
-        let escala_x = ancho_pantalla as f32 / WIDTH as f32;
-        let escala_y = alto_pantalla as f32 / HEIGHT as f32;
-        let escala_pantalla = escala_x.min(escala_y);
-        let desplazamiento_x = (ancho_pantalla as f32 - WIDTH as f32 * escala_pantalla) * 0.5;
-        let desplazamiento_y = (alto_pantalla as f32 - HEIGHT as f32 * escala_pantalla) * 0.5;
+            if let Some((pieza, t)) = mesa.intersectar(ray) {
+                let reemplazar = impacto_cercano
+                    .map(|(_, distancia)| t < distancia)
+                    .unwrap_or(true);
 
-        let mut d = rl.begin_drawing(&thread);
-        d.clear_background(Color::BLACK);
-        pantalla
-            .update_texture(fb.as_bytes())
-            .expect("no se pudo actualizar la textura de pantalla");
-        d.draw_texture_ex(
-            &pantalla,
-            Vector2::new(desplazamiento_x, desplazamiento_y),
-            0.0,
-            escala_pantalla,
-            Color::WHITE,
+                if reemplazar {
+                    impacto_cercano = Some((pieza, t));
+                }
+            }
+
+            if let Some((pieza, t)) = lampara.intersectar(ray) {
+                if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
+                    impacto_cercano = Some((pieza, t));
+                }
+            }
+            let mut es_habitacion = false;
+            if let Some((panel, t)) = habitacion.intersectar(ray) {
+                if impacto_cercano.map(|(_, d)| t < d).unwrap_or(true) {
+                    impacto_cercano = Some((panel, t));
+                    es_habitacion = true;
+                }
+            }
+            impacto_cercano.map(|(objeto, t)| (objeto, t, es_habitacion))
+        })
+    };
+    let trabajadores = std::env::var("RENDER_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or_else(paralelo::trabajadores_disponibles);
+    let filas_bloque = std::env::var("RENDER_BLOCK_ROWS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(8);
+    std::thread::scope(|scope| {
+        let mut pool = RenderParalelo::new(
+            scope,
+            WIDTH as usize,
+            HEIGHT as usize,
+            trabajadores,
+            filas_bloque,
+            &calcular_pixel,
         );
-        dibujar_fps(&mut d, fps);
-    }
+        while !rl.window_should_close() {
+            controlar_pantalla_completa(&mut rl);
+
+            if rl.is_key_down(KeyboardKey::KEY_LEFT) {
+                yaw -= velocidad_giro;
+            }
+            if rl.is_key_down(KeyboardKey::KEY_RIGHT) {
+                yaw += velocidad_giro;
+            }
+            if rl.is_key_down(KeyboardKey::KEY_UP) {
+                pitch = (pitch + velocidad_giro).min(PITCH_MAX);
+            }
+            if rl.is_key_down(KeyboardKey::KEY_DOWN) {
+                pitch = (pitch - velocidad_giro).max(-PITCH_MAX);
+            }
+
+            let forward = normalize(direccion_camara(yaw, pitch));
+            let right = normalize(cross(forward, [0.0, 1.0, 0.0]));
+            let up = cross(right, forward);
+
+            if rl.is_key_down(KeyboardKey::KEY_W) {
+                camera_pos = suma(camera_pos, escala(forward, velocidad_movimiento));
+            }
+            if rl.is_key_down(KeyboardKey::KEY_S) {
+                camera_pos = suma(camera_pos, escala(forward, -velocidad_movimiento));
+            }
+            if rl.is_key_down(KeyboardKey::KEY_A) {
+                camera_pos = suma(camera_pos, escala(right, -velocidad_movimiento));
+            }
+            if rl.is_key_down(KeyboardKey::KEY_D) {
+                camera_pos = suma(camera_pos, escala(right, velocidad_movimiento));
+            }
+            if rl.is_key_down(KeyboardKey::KEY_SPACE) {
+                camera_pos[1] += velocidad_movimiento;
+            }
+            if rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT) {
+                camera_pos[1] -= velocidad_movimiento;
+            }
+
+            // Aplicar despues de TODOS los controles y antes de trazar los rayos.
+            cuarto::limitar_camara(&mut camera_pos);
+
+            pool.renderizar(
+                Camara {
+                    posicion: camera_pos,
+                    forward,
+                    right,
+                    up,
+                },
+                fb.pixels_mut(),
+            )
+            .expect("fallo del render paralelo");
+            let fps = rl.get_fps();
+            let ancho_pantalla = rl.get_screen_width();
+            let alto_pantalla = rl.get_screen_height();
+            let escala_x = ancho_pantalla as f32 / WIDTH as f32;
+            let escala_y = alto_pantalla as f32 / HEIGHT as f32;
+            let escala_pantalla = escala_x.min(escala_y);
+            let desplazamiento_x = (ancho_pantalla as f32 - WIDTH as f32 * escala_pantalla) * 0.5;
+            let desplazamiento_y = (alto_pantalla as f32 - HEIGHT as f32 * escala_pantalla) * 0.5;
+
+            let mut d = rl.begin_drawing(&thread);
+            d.clear_background(Color::BLACK);
+            pantalla
+                .update_texture(fb.as_bytes())
+                .expect("no se pudo actualizar la textura de pantalla");
+            d.draw_texture_ex(
+                &pantalla,
+                Vector2::new(desplazamiento_x, desplazamiento_y),
+                0.0,
+                escala_pantalla,
+                Color::WHITE,
+            );
+            dibujar_fps(&mut d, fps);
+        }
+    });
 }

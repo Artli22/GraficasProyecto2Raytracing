@@ -544,13 +544,9 @@ pub fn crear_mesa() -> Mesa {
     // Separados de la tronera delantera y de la tiza trasera.
     for z in [-1.85, -2.20] {
         let base = [1.68, ELEVACION_MESA + 0.82, z];
-        for vaso in [
-            crate::vasos::Vaso::vidrio(base),
-            crate::vasos::Vaso::liquido(base),
-        ] {
-            let (centro, tamano) = vaso.limites();
-            piezas.push(Pieza::new(Box::new(vaso), centro, tamano));
-        }
+        let vaso = crate::vasos::Vaso::new(base);
+        let (centro, tamano) = vaso.limites();
+        piezas.push(Pieza::new(Box::new(vaso), centro, tamano));
     }
     let mut indices: Vec<usize> = (0..piezas.len()).collect();
     let raiz = Nodo::construir(&mut indices, &piezas);
@@ -567,8 +563,7 @@ mod tests {
             let ray = Ray::new([1.68, 3.0, z], [0.0, -1.0, 0.0]);
             let (obj, t) = mesa.intersectar(&ray).unwrap();
             assert!(
-                (ray.point_at(t)[1] - (ELEVACION_MESA + 0.82 + 0.035 + 0.0001 + 0.145)).abs()
-                    < 1e-8
+                (ray.point_at(t)[1] - (ELEVACION_MESA + 0.82 + crate::vasos::ALTO)).abs() < 1e-8
             );
             assert!(obj.textura().transparencia() > 0.0);
         }

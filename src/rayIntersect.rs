@@ -23,7 +23,17 @@ impl Ray {
 }
 
 /// Cualquier cuerpo geometrico que un rayo puede golpear (esfera, cubo, etc.).
+pub struct PasoOptico {
+    pub rayo: Ray,
+    pub filtro: [f64; 3],
+    pub aporte: [f64; 3],
+}
+
 pub trait Objeto: Send + Sync {
+    /// Un objeto compuesto resuelve su interior sin consultar otra vez la escena.
+    fn atravesar(&self, _ray: &Ray, _t: f64) -> Option<PasoOptico> {
+        None
+    }
     /// Distancia t al impacto mas cercano, o None si el rayo no lo toca.
     fn intersect(&self, ray: &Ray) -> Option<f64>;
     fn normal(&self, punto: [f64; 3]) -> [f64; 3];
