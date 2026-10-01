@@ -619,12 +619,106 @@ pub fn crear_mesa() -> Mesa {
         let (centro, tamano) = vaso.limites();
         piezas.push(Pieza::new(Box::new(vaso), centro, tamano));
     }
+    agregar_portatacos(&mut piezas);
     let mut indices: Vec<usize> = (0..piezas.len()).collect();
     let raiz = Nodo::construir(&mut indices, &piezas);
     Mesa { raiz, piezas }
 }
+// Cuatro alojamientos reales; dos tacos nuevos, sin retirar los de la mesa.
+// Se incorporan al BVH y al mapa estatico de sombras ya existentes.
+const SOPORTE_X: f64 = -3.5;
+const SOPORTE_Z: f64 = crate::cuarto::Z_MIN + 0.55;
+fn agregar_portatacos(piezas: &mut Vec<Pieza>) {
+    let madera_clara = || {
+        Box::new(TexturaMadera::new(
+            [0.53, 0.31, 0.14],
+            [0.29, 0.14, 0.045],
+            6.0,
+            90.0,
+            0.0,
+        )) as Box<dyn Textura>
+    };
+    let suelo = crate::cuarto::Y_MIN;
+    agregar_caja(
+        piezas,
+        [SOPORTE_X, suelo + 0.07, SOPORTE_Z],
+        [1.92, 0.14, 0.46],
+        madera_clara(),
+    );
+    for dx in [-0.91, 0.91] {
+        agregar_caja(
+            piezas,
+            [SOPORTE_X + dx, suelo + 0.57, SOPORTE_Z],
+            [0.10, 1.14, 0.46],
+            madera_clara(),
+        );
+    }
+    // Dos travesanos perforados con cuatro huecos cuadrados (sin CSG costoso).
+    for y in [0.34, 0.99] {
+        for dz in [-0.155, 0.155] {
+            agregar_caja(
+                piezas,
+                [SOPORTE_X, suelo + y, SOPORTE_Z + dz],
+                [1.72, 0.10, 0.15],
+                madera_clara(),
+            );
+        }
+        for (a, b) in [
+            (-0.86, -0.68),
+            (-0.52, -0.28),
+            (-0.12, 0.12),
+            (0.28, 0.52),
+            (0.68, 0.86),
+        ] {
+            agregar_caja(
+                piezas,
+                [SOPORTE_X + (a + b) * 0.5, suelo + y, SOPORTE_Z],
+                [b - a, 0.10, 0.16],
+                madera_clara(),
+            );
+        }
+    }
+    // Asientos oscuros visibles en la base, incluso en los espacios vacios.
+    for dx in [-0.60, -0.20, 0.20, 0.60] {
+        piezas.push(Pieza::new(
+            Box::new(DiscoHorizontal::new(
+                [SOPORTE_X + dx, suelo + 0.141, SOPORTE_Z],
+                0.07,
+                negro(),
+            )),
+            [SOPORTE_X + dx, suelo + 0.141, SOPORTE_Z],
+            [0.14, 0.002, 0.14],
+        ));
+    }
+    for dx in [-0.60, 0.20] {
+        let inicio = [SOPORTE_X + dx, suelo + 0.142, SOPORTE_Z];
+        let fin = [SOPORTE_X + dx, suelo + 4.042, SOPORTE_Z];
+        piezas.push(Pieza::new(
+            Box::new(crate::taco::Taco::new(inicio, fin, 0.048, 0.020)),
+            [SOPORTE_X + dx, suelo + 2.092, SOPORTE_Z],
+            [0.096, 3.996, 0.096],
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn portatacos_dos_ocupados_y_dos_huecos_abiertos() {
+        let mesa = super::crear_mesa();
+        for (dx, ocupado) in [(-0.60, true), (-0.20, false), (0.20, true), (0.60, false)] {
+            let x = super::SOPORTE_X + dx;
+            let y = crate::cuarto::Y_MIN;
+            let horizontal =
+                super::Ray::new([x, y + 2.0, super::SOPORTE_Z + 1.0], [0.0, 0.0, -1.0]);
+            assert_eq!(mesa.intersectar(&horizontal).is_some(), ocupado);
+            if !ocupado {
+                let vertical = super::Ray::new([x, y + 1.20, super::SOPORTE_Z], [0.0, -1.0, 0.0]);
+                let (_, t) = mesa.intersectar(&vertical).unwrap();
+                assert!((vertical.point_at(t)[1] - (y + 0.141)).abs() < 1e-8);
+            }
+        }
+    }
     #[test]
     fn profundidad_opaca_ignora_vasos_y_coincide_con_lineal() {
         let mesa = super::crear_mesa();
@@ -763,3 +857,4 @@ mod tests {
         }
     }
 }
+

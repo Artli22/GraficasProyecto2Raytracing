@@ -58,7 +58,7 @@ fn main() {
     let bolas = crear_bolas();
     let mesa = crear_mesa();
     let lampara = lampara::crear_lampara();
-    let habitacion = cuarto::crear_habitacion();
+    let habitacion = cuarto::crear_cuarto();
 
     // Una sola textura de GPU reutilizada cada frame
     let imagen_inicial = Image::gen_image_color(WIDTH, HEIGHT, Color::BLACK);
