@@ -6,8 +6,8 @@ const EPS: f64 = 1e-7;
 // Edita estos limites para cambiar el tamano: geometria y camara los comparten.
 pub const X_MIN: f64 = -5.0;
 pub const X_MAX: f64 = 5.0;
-pub const Y_MIN: f64 = 0.0; // Piso.
-pub const Y_MAX: f64 = 5.2; // Techo.
+pub const Y_MIN: f64 = 0.0; 
+pub const Y_MAX: f64 = 5.2; 
 pub const Z_MIN: f64 = -11.0;
 pub const Z_MAX: f64 = 3.0;
 pub const MARGEN_CAMARA: f64 = 0.20;
@@ -327,6 +327,64 @@ impl Textura for ParedConPuerta {
     }
 }
 
+// Imagen del usuario integrada al ejecutable: sin lectura de disco por frame.
+const CUADRO_RGB: &[u8; 474 * 241 * 3] = include_bytes!("assets/cuadro.rgb");
+pub const CUADRO_CENTRO_Z: f64 = -4.2;
+pub const CUADRO_BASE_Y: f64 = 2.0;
+pub const CUADRO_ANCHO: f64 = 2.8;
+pub const CUADRO_ALTO: f64 = CUADRO_ANCHO * 241.0 / 474.0;
+
+struct ParedConCuadro {
+    fondo: Box<dyn Textura>,
+}
+impl Textura for ParedConCuadro {
+    fn albedo(&self, u: f64, v: f64) -> Albedo {
+        // Pared X_MIN: u es altura desde el piso y v profundidad desde Z_MIN.
+        let y = u + Y_MIN - CUADRO_BASE_Y;
+        let z = v + Z_MIN - (CUADRO_CENTRO_Z - CUADRO_ANCHO * 0.5);
+        if y < 0.0 || y >= CUADRO_ALTO || z < 0.0 || z >= CUADRO_ANCHO {
+            return self.fondo.albedo(u, v);
+        }
+        // Invertir Z para conservar la orientacion original vista desde dentro.
+        let x = 473 - ((z / CUADRO_ANCHO * 474.0) as usize).min(473);
+        let fila = ((1.0 - y / CUADRO_ALTO) * 241.0) as usize;
+        let i = (fila.min(240) * 474 + x.min(473)) * 3;
+        [
+            CUADRO_RGB[i] as f64 / 255.0,
+            CUADRO_RGB[i + 1] as f64 / 255.0,
+            CUADRO_RGB[i + 2] as f64 / 255.0,
+        ]
+    }
+}
+
+// Segundo cuadro, pared Z_MAX detras de la camara inicial.
+const PINTURA_RGB: &[u8; 384 * 288 * 3] = include_bytes!("assets/pintura.rgb");
+pub const PINTURA_LADO: f64 = 3.0;
+pub const PINTURA_CENTRO_X: f64 = 0.0;
+pub const PINTURA_BASE_Y: f64 = 1.6;
+struct ParedConPintura {
+    fondo: Box<dyn Textura>,
+}
+impl Textura for ParedConPintura {
+    fn albedo(&self, u: f64, v: f64) -> Albedo {
+        let x = u + X_MIN - (PINTURA_CENTRO_X - PINTURA_LADO * 0.5);
+        let y = v + Y_MIN - PINTURA_BASE_Y;
+        if x < 0.0 || x >= PINTURA_LADO || y < 0.0 || y >= PINTURA_LADO {
+            return self.fondo.albedo(u, v);
+        }
+        // Imagen completa adaptada al cuadrado, sin recortar. Al mirar hacia +Z,
+        // -X queda a la derecha del observador.
+        let columna = 383 - ((x / PINTURA_LADO * 384.0) as usize).min(383);
+        let fila = ((1.0 - y / PINTURA_LADO) * 288.0) as usize;
+        let i = (fila.min(287) * 384 + columna) * 3;
+        [
+            PINTURA_RGB[i] as f64 / 255.0,
+            PINTURA_RGB[i + 1] as f64 / 255.0,
+            PINTURA_RGB[i + 2] as f64 / 255.0,
+        ]
+    }
+}
+
 pub struct Habitacion {
     paneles: Vec<Panel>,
 }
@@ -389,7 +447,14 @@ pub fn crear_cuarto() -> Habitacion {
                 -1.0,
                 Box::new(ColorSolido::new(COLOR_TECHO)),
             ),
-            Panel::new(0, X_MIN, [Y_MIN, Z_MIN], [Y_MAX, Z_MAX], 1.0, pared(true)),
+            Panel::new(
+                0,
+                X_MIN,
+                [Y_MIN, Z_MIN],
+                [Y_MAX, Z_MAX],
+                1.0,
+                Box::new(ParedConCuadro { fondo: pared(true) }),
+            ),
             Panel::new(0, X_MAX, [Y_MIN, Z_MIN], [Y_MAX, Z_MAX], -1.0, pared(true)),
             Panel::new(
                 2,
@@ -399,7 +464,16 @@ pub fn crear_cuarto() -> Habitacion {
                 1.0,
                 Box::new(ParedConPuerta::new(pared(false))),
             ),
-            Panel::new(2, Z_MAX, [X_MIN, Y_MIN], [X_MAX, Y_MAX], -1.0, pared(false)),
+            Panel::new(
+                2,
+                Z_MAX,
+                [X_MIN, Y_MIN],
+                [X_MAX, Y_MAX],
+                -1.0,
+                Box::new(ParedConPintura {
+                    fondo: pared(false),
+                }),
+            ),
         ],
     }
 }
@@ -484,4 +558,3 @@ pub fn relleno_ambiente(color: raylib::prelude::Color, albedo: Albedo) -> raylib
         |base: u8, i: usize| (base as f64 + albedo[i] * 0.24 * 255.0).clamp(0.0, 255.0) as u8;
     raylib::prelude::Color::new(canal(color.r, 0), canal(color.g, 1), canal(color.b, 2), 255)
 }
-

@@ -620,10 +620,84 @@ pub fn crear_mesa() -> Mesa {
         piezas.push(Pieza::new(Box::new(vaso), centro, tamano));
     }
     agregar_portatacos(&mut piezas);
+    agregar_triangulo(&mut piezas);
     let mut indices: Vec<usize> = (0..piezas.len()).collect();
     let raiz = Nodo::construir(&mut indices, &piezas);
     Mesa { raiz, piezas }
 }
+// Tres prismas orientados forman un triangulo abierto, sin malla ni CSG.
+struct BarraTriangulo {
+    centro: [f64; 3],
+    ejes: [[f64; 3]; 3],
+    caja: CajaRectangular,
+}
+struct PlasticoTriangulo;
+impl Textura for PlasticoTriangulo {
+    fn albedo(&self, _: f64, _: f64) -> crate::textura::Albedo {
+        [0.055, 0.06, 0.055]
+    }
+    fn brillo(&self) -> f64 {
+        65.0
+    }
+}
+impl BarraTriangulo {
+    fn local_vector(&self, v: [f64; 3]) -> [f64; 3] {
+        self.ejes.map(|e| crate::rayIntersect::dot(v, e))
+    }
+}
+impl Objeto for BarraTriangulo {
+    fn intersect(&self, r: &Ray) -> Option<f64> {
+        self.caja.intersect(&Ray {
+            origin: self.local_vector(crate::rayIntersect::sub(r.origin, self.centro)),
+            direction: self.local_vector(r.direction),
+        })
+    }
+    fn normal(&self, p: [f64; 3]) -> [f64; 3] {
+        let n = self
+            .caja
+            .normal(self.local_vector(crate::rayIntersect::sub(p, self.centro)));
+        std::array::from_fn(|i| {
+            n[0] * self.ejes[0][i] + n[1] * self.ejes[1][i] + n[2] * self.ejes[2][i]
+        })
+    }
+    fn uv(&self, _: [f64; 3]) -> (f64, f64) {
+        (0.0, 0.0)
+    }
+    fn textura(&self) -> &dyn Textura {
+        self.caja.textura()
+    }
+}
+fn agregar_triangulo(piezas: &mut Vec<Pieza>) {
+    use crate::rayIntersect::{cross, dot, normalize, sub};
+    // Pata delantera derecha: triangulo apoyado por delante de ella.
+    let a = [0.91, 0.055, -0.90];
+    let b = [1.79, 0.055, -0.90];
+    let c = [1.35, 0.79, -1.325];
+    let perpendicular = normalize(cross(sub(b, a), sub(c, a)));
+    for (inicio, fin) in [(a, b), (b, c), (c, a)] {
+        let delta = sub(fin, inicio);
+        let largo = dot(delta, delta).sqrt();
+        let eje = normalize(delta);
+        let ejes = [eje, normalize(cross(perpendicular, eje)), perpendicular];
+        let centro = std::array::from_fn(|i| (inicio[i] + fin[i]) * 0.5);
+        let dimensiones = [largo + 0.025, 0.05, 0.085];
+        let tamano = std::array::from_fn(|i| {
+            (0..3)
+                .map(|j| ejes[j][i].abs() * dimensiones[j])
+                .sum::<f64>()
+        });
+        piezas.push(Pieza::new(
+            Box::new(BarraTriangulo {
+                centro,
+                ejes,
+                caja: CajaRectangular::new([0.0; 3], dimensiones, Box::new(PlasticoTriangulo)),
+            }),
+            centro,
+            tamano,
+        ));
+    }
+}
+
 // Cuatro alojamientos reales; dos tacos nuevos, sin retirar los de la mesa.
 // Se incorporan al BVH y al mapa estatico de sombras ya existentes.
 const SOPORTE_X: f64 = -3.5;
@@ -857,4 +931,3 @@ mod tests {
         }
     }
 }
-
